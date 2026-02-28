@@ -4,9 +4,9 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "dev": "bun run src/dev-server.ts",
-    "build": "bun run src/build.ts",
-    "preview": "bun run src/preview.ts",
+    "dev": "bun run scripts/dev-server.ts",
+    "build": "bun run scripts/build.ts",
+    "preview": "bun run scripts/preview.ts",
     "test": "bun test"
   },
   "devDependencies": {

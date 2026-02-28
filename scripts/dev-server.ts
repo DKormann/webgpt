@@ -1,4 +1,4 @@
-import { readFileSync, watch } from "node:fs";
+import { existsSync, readFileSync, watch } from "node:fs";
 import { join, normalize } from "node:path";
 
 const cwd = process.cwd();
@@ -36,14 +36,16 @@ const server = Bun.serve({
     const pathname = url.pathname;
 
     if (pathname === "/__reload") {
+      let pushRef: ((payload: string) => void) | null = null;
       const stream = new ReadableStream({
         start(controller) {
           const push = (payload: string) => controller.enqueue(payload);
+          pushRef = push;
           clients.add(push);
           push("event: ready\\ndata: 1\\n\\n");
         },
         cancel() {
-          for (const client of clients) clients.delete(client);
+          if (pushRef) clients.delete(pushRef);
         }
       });
       return new Response(stream, {
@@ -65,6 +67,7 @@ const server = Bun.serve({
 
     const fsPath = toFsPath(pathname);
     if (!fsPath) return new Response("Not found", { status: 404 });
+    if (!existsSync(fsPath)) return new Response("Not found", { status: 404 });
 
     if (pathname.endsWith(".ts")) {
       const source = readFileSync(fsPath, "utf8");
@@ -74,8 +77,7 @@ const server = Bun.serve({
       });
     }
 
-    const file = Bun.file(fsPath);
-    return new Response(file);
+    return new Response(Bun.file(fsPath));
   }
 });
 

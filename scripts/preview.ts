@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { join, normalize } from "node:path";
 
 const cwd = process.cwd();
@@ -17,6 +18,7 @@ const server = Bun.serve({
     const url = new URL(req.url);
     const fsPath = toFsPath(url.pathname);
     if (!fsPath) return new Response("Not found", { status: 404 });
+    if (!existsSync(fsPath)) return new Response("Not found", { status: 404 });
     return new Response(Bun.file(fsPath));
   }
 });

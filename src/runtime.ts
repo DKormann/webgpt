@@ -1,111 +1,47 @@
-import type { UOP } from "./uop.ts";
+import type { Shape, UOP } from "./uops.ts";
 
-type BufferLike = ArrayLike<number>;
-type Compiled = (outSize: number, buffers: BufferLike[]) => number[];
+type Compiled = (shape: Shape) => number[];
 
-const scalar = (value: number): string =>
-  Number.isFinite(value) ? String(value) : "0";
-
-const toposort = (root: UOP): UOP[] => {
-  const seen = new Set<UOP>();
-  const nodes: UOP[] = [];
-  const visit = (node: UOP): void => {
-    if (seen.has(node)) return;
-    seen.add(node);
-    if ("srcs" in node) {
-      for (const src of node.srcs) visit(src);
-    }
-    nodes.push(node);
-  };
-  visit(root);
-  return nodes;
-};
+const scalar = (value: number): string => String(value);
 
 const generateCode = (uop: UOP): string => {
-  const nodes = toposort(uop);
-  const ids = new Map<UOP, string>();
-  nodes.forEach((node, i) => ids.set(node, `n${i}`));
+  const constIds = new Map<UOP, string>();
+  const decls: string[] = [];
 
-  const lines: string[] = [
-    '"use strict";',
-    "const out = Math.max(0, outSize | 0);",
-    "const safe = (arr, i) => {",
-    "  if (!arr) return 0;",
-    "  const v = arr[i];",
-    "  return Number.isFinite(v) ? v : 0;",
-    "};",
-    "const range = (n) => {",
-    "  const r = new Array(n);",
-    "  for (let i = 0; i < n; i++) r[i] = i;",
-    "  return r;",
-    "};"
-  ];
-
-  for (const node of nodes) {
-    const id = ids.get(node)!;
-
+  const emitAt = (node: UOP, at: string): string => {
     if (node.op === "CONST") {
-      const values = node.data.map(scalar).join(", ");
-      const len = Math.max(node.data.length, 1);
-      lines.push(`const ${id} = new Array(out);`);
-      lines.push(`for (let i = 0; i < out; i++) ${id}[i] = [${values}][i % ${len}];`);
-      continue;
+      const len = node.data.length;
+      if (len <= 1) return scalar(node.data[0] ?? 0);
+      let id = constIds.get(node);
+      if (!id) {
+        id = `c${constIds.size}`;
+        constIds.set(node, id);
+        decls.push(`const ${id}=[${node.data.map(scalar).join(",")}];`);
+      }
+      return `${id}[${at}%${len}]`;
     }
-
-    if (node.op === "BUFFER") {
-      const idx = node.idx | 0;
-      lines.push(`const ${id} = new Array(out);`);
-      lines.push(
-        `for (let i = 0; i < out; i++) ${id}[i] = safe(buffers[${idx}], i);`
-      );
-      continue;
-    }
-
-    if (node.op === "RANGE") {
-      lines.push(`const ${id} = range(out);`);
-      continue;
-    }
-
-    const a = ids.get(node.srcs[0])!;
-    const b = ids.get(node.srcs[1])!;
-    lines.push(`const ${id} = new Array(out);`);
-    if (node.op === "ADD") {
-      lines.push(`for (let i = 0; i < out; i++) ${id}[i] = ${a}[i] + ${b}[i];`);
-      continue;
-    }
-    if (node.op === "MUL") {
-      lines.push(`for (let i = 0; i < out; i++) ${id}[i] = ${a}[i] * ${b}[i];`);
-      continue;
-    }
-    lines.push(
-      `for (let i = 0; i < out; i++) ${id}[i] = safe(${a}, Math.trunc(${b}[i]));`
-    );
-  }
-
-  lines.push(`return ${ids.get(uop)};`);
-  return lines.join("\n");
-};
-
-const parseExecArgs = (args: unknown[]): { outSize: number; buffers: BufferLike[] } => {
-  if (args.length === 0) return { outSize: 1, buffers: [] };
-  if (typeof args[0] === "number") {
-    return {
-      outSize: Math.max(0, Math.trunc(args[0])),
-      buffers: args.slice(1).filter(Array.isArray) as BufferLike[]
-    };
-  }
-  const buffers = args.filter(Array.isArray) as BufferLike[];
-  const inferred = buffers[0]?.length ?? 1;
-  return { outSize: inferred, buffers };
-};
-
-export const compile = (uop: UOP): ((...args: unknown[]) => number[]) => {
-  const code = generateCode(uop);
-  const fn = new Function("outSize", "buffers", code) as Compiled;
-  return (...args: unknown[]) => {
-    const { outSize, buffers } = parseExecArgs(args);
-    return fn(outSize, buffers);
+    if (node.op === "RANGE") return at;
+    const a = emitAt(node.srcs[0], at);
+    const b = emitAt(node.srcs[1], at);
+    if (node.op === "ADD") return `(${a}+${b})`;
+    if (node.op === "MUL") return `(${a}*${b})`;
+    return emitAt(node.srcs[0], b);
   };
+
+  const expr = emitAt(uop, "i");
+  return [
+    '"use strict";',
+    ...decls,
+    "const out = shape.numel;",
+    "const result = new Array(out);",
+    `for (let i=0;i<out;i++) result[i]=${expr};`,
+    "return result;"
+  ].join("\n");
 };
 
-export const exec = (uop: UOP, ...args: unknown[]): number[] => compile(uop)(...args);
+export const compile = (uop: UOP): Compiled => {
+  const code = generateCode(uop);
+  return new Function("shape", code) as Compiled;
+};
+
+export const exec = (uop: UOP, shape: Shape): number[] => compile(uop)(shape);
