@@ -4,8 +4,9 @@ export type Shape = {
   numel: number;
 };
 
-export type MathOP = "ADD" | "MUL";
-export type OP = MathOP | "RANGE" | "CONST" | "IDX";
+export type Binop = "ADD" | "MUL";
+
+export type OP = Binop | "RANGE" | "CONST" | "IDX" | "REDUCE";
 
 export type UOP =
   | {
@@ -14,8 +15,13 @@ export type UOP =
     }
   | {
       op: "RANGE";
+      count: number
     }
   | {
-      op: MathOP;
+      op: "REDUCE";
+      bin: Binop,
+    }
+  | {
+      op: Binop;
       srcs: [UOP, UOP];
     };
