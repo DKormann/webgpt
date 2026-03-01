@@ -5,8 +5,10 @@ const dynamicEl = document.querySelector<HTMLPreElement>("#tensor-dynamic");
 
 const info = new Map<string, string>([
   ["const", "Create a filled tensor. ex: Tensor.const(1, [2,3])"],
+  ["rand", "Create random tensor in [0,1). ex: Tensor.rand([2,3])"],
   ["new", "Create from nested arrays. ex: Tensor.new([[1,2],[3,4]])"],
   ["add", "Elementwise add. ex: a.add(b)"],
+  ["mul", "Elementwise multiply. ex: a.mul(b)"],
   ["reshape", "Change view shape. ex: t.reshape([3,2])"],
   ["permute", "Reorder axes. ex: t.permute([1,0])"],
   ["expand", "Broadcast dim=1 axes. ex: t.expand([2,3])"],
@@ -14,7 +16,7 @@ const info = new Map<string, string>([
   ["shrink", "Crop ranges. ex: t.shrink([[1,3],[0,2]])"],
   ["sum", "Reduce add over dims. ex: t.sum([1])"],
   ["prod", "Reduce multiply over dims. ex: t.prod([0])"],
-  ["run", "Execute tensor. ex: t.run('js')"]
+  ["run", "Execute tensor async. ex: await t.run('js')"]
 ]);
 
 const renderList = (keys: string[]): string =>

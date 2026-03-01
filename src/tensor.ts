@@ -1,9 +1,10 @@
-import { exec, type RuntimeName } from "./runtime/index.ts";
+import { execAsync, type RuntimeName } from "./runtime/index.ts";
 import type { Shape, UOP } from "./uops.ts";
 
 
 type TensorMethods = {
   add: (b: Tensor) => Tensor;
+  mul: (b: Tensor) => Tensor;
   sum: (dims?: number[]) => Tensor;
   prod: (dims?: number[]) => Tensor;
   reshape: (dims: number[]) => Tensor;
@@ -11,7 +12,7 @@ type TensorMethods = {
   expand: (dims: number[]) => Tensor;
   pad: (pads: [number, number][]) => Tensor;
   shrink: (cuts: [number, number][]) => Tensor;
-  run: (backend?: RuntimeName) => number[];
+  run: (backend?: RuntimeName) => Promise<number[]>;
 };
 
 export type TensorData = {
@@ -30,6 +31,17 @@ export const Tensor = {
       numel: dims.reduce((a, c) => a * c, 1)
     },
   }),
+  rand: (dims: number[]): Tensor => {
+    const numel = dims.reduce((a, c) => a * c, 1);
+    return mkTensor({
+      uop: { op: "CONST", data: Array.from({ length: numel }, () => Math.random()) },
+      shape: {
+        dims,
+        strides: dims.map((_, i) => dims.slice(i + 1).reduce((a, c) => a * c, 1)),
+        numel
+      }
+    });
+  },
   new: (raw: Raw = 0) => {
     const dims: number[] = [];
     let cur: Raw = raw;
@@ -74,6 +86,10 @@ const mkTensor = (t: TensorData): Tensor => {
     add: (b) => mkTensor({
       ...t,
       uop: { op: "ADD", srcs: [t.uop, b.uop], srcShapes: [t.shape, b.shape] }
+    }),
+    mul: (b) => mkTensor({
+      ...t,
+      uop: { op: "MUL", srcs: [t.uop, b.uop], srcShapes: [t.shape, b.shape] }
     }),
     sum: (dims) => mkTensor({
       uop: { op: "REDUCE", bin: "ADD", src: t.uop, inShape: t.shape, dims: reduceDims(dims) },
@@ -134,6 +150,6 @@ const mkTensor = (t: TensorData): Tensor => {
         offset: (t.shape.offset ?? 0) + cuts.reduce((a, c, i) => a + c[0] * t.shape.strides[i], 0)
       }
     }),
-    run: (backend?: RuntimeName) => exec(backend ?? BACKEND.default, t.uop, t.shape)
+    run: (backend?: RuntimeName) => execAsync(backend ?? BACKEND.default, t.uop, t.shape)
   };
 };

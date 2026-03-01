@@ -2,18 +2,15 @@ import { describe, test, expect } from "bun:test";
 import type { Tensor } from "./tensor.ts";
 import { Tensor as T } from "./tensor.ts";
 
-
-
-
-const compare = (t:Tensor) => {
-  expect(t.run("naive")).toEqual(t.run("js"))
-}
+const compare = async (t: Tensor) => {
+  expect(await t.run("naive")).toEqual(await t.run("js"));
+};
 
 
 
 describe("tensor runtime parity", () => {
-  test("shape chain parity", () => {
-    compare(
+  test("shape chain parity", async () => {
+    await compare(
       T.new([[1, 2, 3], [4, 5, 6]])
         .permute([1, 0])
         .pad([[1, 0], [0, 1]])
@@ -25,16 +22,21 @@ describe("tensor runtime parity", () => {
     );
   });
 
-  test("stride mismatch add parity", () => {
+  test("stride mismatch add parity", async () => {
     const a = T.new([[1, 2, 3], [4, 5, 6]]);
-    compare(a.add(a.reshape([3, 2]).permute([1, 0])));
+    await compare(a.add(a.reshape([3, 2]).permute([1, 0])));
   });
 
-  test("reduce dims parity", () => {
+  test("mul parity", async () => {
+    const a = T.new([[1, 2, 3], [4, 5, 6]]);
+    await compare(a.mul(T.const(2, [2, 3])));
+  });
+
+  test("reduce dims parity", async () => {
     const t = T.new([[1, 2, 3], [4, 5, 6]]);
-    compare(t.sum([0]));
-    compare(t.sum([1]));
-    compare(t.prod([0]));
-    compare(t.prod([1]));
+    await compare(t.sum([0]));
+    await compare(t.sum([1]));
+    await compare(t.prod([0]));
+    await compare(t.prod([1]));
   });
 });
