@@ -9,6 +9,11 @@ const toFsPath = (pathname: string): string | null => {
   const clean = pathname === "/" ? "/index.html" : pathname;
   const resolved = normalize(join(docsDir, clean));
   if (!resolved.startsWith(docsDir)) return null;
+  if (existsSync(resolved)) return resolved;
+  if (!clean.includes(".")) {
+    const htmlResolved = normalize(join(docsDir, `${clean}.html`));
+    if (htmlResolved.startsWith(docsDir) && existsSync(htmlResolved)) return htmlResolved;
+  }
   return resolved;
 };
 

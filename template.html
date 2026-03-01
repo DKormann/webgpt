@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tensor Template</title>
+    <link rel="stylesheet" href="/src/style.css" />
+    <script type="module" src="/src/template.ts"></script>
+  </head>
+  <body>
+    <main id="app">
+      <h1>Tensor Template</h1>
+      <p>This project models tensor compute as a UOP graph plus shape/view transforms.</p>
+      <p>
+        Core concepts:
+        <code>UOP</code> nodes for compute, <code>Shape</code> for dims/strides/offset/mask,
+        and runtime backends (<code>js</code>, <code>naive</code>, <code>webgpu</code>).
+      </p>
+      <p>Use this template as the starting point for experiments and small model pipelines.</p>
+      <h2>Tensor Static Methods</h2>
+      <pre id="tensor-static">Loading...</pre>
+      <h2>Tensor Instance Methods</h2>
+      <pre id="tensor-dynamic">Loading...</pre>
+      <p><a href="/">Back to playground</a></p>
+    </main>
+  </body>
+</html>

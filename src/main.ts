@@ -11,6 +11,7 @@ if (!app) throw new Error("#app not found");
 app.innerHTML = `
   <h1>WebGPT</h1>
   <p id="status"></p>
+  <p><a href="./template.html">Tensor Template</a></p>
   <textarea id="code" spellcheck="false"></textarea>
   <button id="run">Run</button>
   <pre id="result"></pre>

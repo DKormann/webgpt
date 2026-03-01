@@ -3,7 +3,7 @@ import { join, normalize } from "node:path";
 
 const cwd = process.cwd();
 const port = Number(process.env.PORT ?? 3000);
-const watchedPaths = [join(cwd, "index.html"), join(cwd, "src")];
+const watchedPaths = [join(cwd, "index.html"), join(cwd, "template.html"), join(cwd, "src")];
 const clients = new Set<(payload: string) => void>();
 
 const liveReloadScript = `
@@ -57,8 +57,9 @@ const server = Bun.serve({
       });
     }
 
-    if (pathname === "/") {
-      const html = readFileSync(join(cwd, "index.html"), "utf8").replace(
+    if (pathname === "/" || pathname === "/template") {
+      const page = pathname === "/template" ? "template.html" : "index.html";
+      const html = readFileSync(join(cwd, page), "utf8").replace(
         "</body>",
         `${liveReloadScript}</body>`
       );
