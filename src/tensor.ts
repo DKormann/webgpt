@@ -3,6 +3,9 @@ import type { Shape, UOP } from "./uops.ts";
 
 type TensorMethods = {
   add: (b: Tensor) => Tensor;
+  reshape: (dims: number[]) => Tensor;
+  permute: (axes: number[]) => Tensor;
+  expand: (dims: number[]) => Tensor;
   run: () => number[];
 };
 
@@ -52,6 +55,36 @@ const mkTensor = (t: TensorData): Tensor => {
     add: (b) => mkTensor({
       ...t,
       uop: { op: "ADD", srcs: [t.uop, b.uop] }
+    }),
+    reshape: (dims) => mkTensor({
+      ...t,
+      shape: {
+        dims,
+        strides: dims.map((_, i) => dims.slice(i + 1).reduce((a, c) => a * c, 1)),
+        numel: dims.reduce((a, c) => a * c, 1)
+      }
+    }),
+    permute: (axes) => mkTensor({
+      ...t,
+      shape: {
+        dims: axes.map((a) => t.shape.dims[a]),
+        strides: axes.map((a) => t.shape.strides[a]),
+        numel: t.shape.numel
+      }
+    }),
+    expand: (dims) => mkTensor({
+      ...t,
+      shape: {
+        dims,
+        strides: dims.map((d, i) => {
+          const sd = t.shape.dims[i] ?? 1;
+          const ss = t.shape.strides[i] ?? 0;
+          if (sd === d) return ss;
+          if (sd === 1 && d >= 1) return 0;
+          throw new Error("bad expand");
+        }),
+        numel: dims.reduce((a, c) => a * c, 1)
+      }
     }),
     run: () => exec(t.uop, t.shape)
   };

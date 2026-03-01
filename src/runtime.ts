@@ -18,7 +18,7 @@ const generateCode = (uop: UOP): string => {
         constIds.set(node, id);
         decls.push(`const ${id}=[${node.data.map(scalar).join(",")}];`);
       }
-      return `${id}[${at}%${len}]`;
+      return `${id}[idx(${at},shape)%${len}]`;
     }
     if (node.op === "RANGE") return at;
     const a = emitAt(node.srcs[0], at);
@@ -32,6 +32,15 @@ const generateCode = (uop: UOP): string => {
   return [
     '"use strict";',
     ...decls,
+    "const idx=(i,s)=>{",
+    "  let o=0;",
+    "  for(let d=s.dims.length-1;d>=0;d--){",
+    "    const c=i%s.dims[d];",
+    "    i=(i/s.dims[d])|0;",
+    "    o+=c*s.strides[d];",
+    "  }",
+    "  return o;",
+    "};",
     "const out = shape.numel;",
     "const result = new Array(out);",
     `for (let i=0;i<out;i++) result[i]=${expr};`,
