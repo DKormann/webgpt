@@ -12,7 +12,7 @@ type TensorMethods = {
   expand: (dims: number[]) => Tensor;
   pad: (pads: [number, number][]) => Tensor;
   shrink: (cuts: [number, number][]) => Tensor;
-  run: (backend?: RuntimeName) => Promise<number[]>;
+  run: (backend?: RuntimeName) => Promise<Raw>;
 };
 
 export type TensorData = {
@@ -65,6 +65,15 @@ export const Tensor = {
 
 
 export const BACKEND : {default: RuntimeName} = {default: "js"}
+
+const nest = (flat: number[], dims: number[]): Raw => {
+  if (dims.length === 0) return flat[0] ?? 0;
+  if (dims.length === 1) return flat.slice(0, dims[0]);
+  const step = dims.slice(1).reduce((a, c) => a * c, 1);
+  const out: Raw[] = [];
+  for (let i = 0; i < dims[0]; i++) out.push(nest(flat.slice(i * step, (i + 1) * step), dims.slice(1)));
+  return out;
+};
 
 const mkTensor = (t: TensorData): Tensor => {
   const reduceShape = (dims: number[]) => {
@@ -150,6 +159,9 @@ const mkTensor = (t: TensorData): Tensor => {
         offset: (t.shape.offset ?? 0) + cuts.reduce((a, c, i) => a + c[0] * t.shape.strides[i], 0)
       }
     }),
-    run: (backend?: RuntimeName) => execAsync(backend ?? BACKEND.default, t.uop, t.shape)
+    run: async (backend?: RuntimeName) => {
+      const flat = await execAsync(backend ?? BACKEND.default, t.uop, t.shape);
+      return nest(flat, t.shape.dims);
+    }
   };
 };

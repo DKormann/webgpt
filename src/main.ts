@@ -1,8 +1,8 @@
 const STORAGE_KEY = "playground_code_v1";
-const DEFAULT_CODE = `const a = [1, 2, 3, 4];
-const b = [10, 20, 30, 40];
-const c = await vectorAdd(a, b);
-return { webgpu: webgpuAvailable(), a, b, c };`;
+const DEFAULT_CODE = `const t = Tensor.new([[1,2,3],[4,5,6]]);
+const sum1 = await t.sum([1]).run("webgpu");
+const prod0 = await t.prod([0]).run("webgpu");
+return { webgpu: webgpuAvailable(), sum1, prod0 };`;
 const state: Record<string, unknown> = {};
 
 const app = document.querySelector<HTMLDivElement>("#app");

@@ -148,7 +148,7 @@ const genKernel = (uop: UOP, outShape: Shape) => {
       const mixFn = mkMixFn(node);
       helperFns.push(mixFn.code);
       const mixName = mixFn.name;
-      const inner = emitAt(node.src, `${mixName}(${at}, r)`, inSid);
+      const inner = emitAt(node.src, `${mixName}(oi, r)`, inSid);
       const rnum = node.dims.map((d) => node.inShape.dims[d]).reduce((a, c) => a * c, 1);
       const rid = `red_${reduceFns.size}`;
       reduceFns.set(node, rid);
