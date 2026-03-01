@@ -21,6 +21,16 @@
       <pre id="tensor-static">Loading...</pre>
       <h2>Tensor Instance Methods</h2>
       <pre id="tensor-dynamic">Loading...</pre>
+      <h2>Autograd Example</h2>
+      <pre><code>const x = Tensor.new([2, 3], { requiresGrad: true });
+const y = x.mul(x).sum();   // y = 2^2 + 3^2 = 13
+
+y.backward();               // dy/dx = 2x
+
+const yValue = await y.run();       // 13
+const xGrad = await x.grad!.run();  // [4, 6]
+
+return { yValue, xGrad };</code></pre>
       <p><a href="/webgpt/">Back to playground</a></p>
     </main>
   </body>
