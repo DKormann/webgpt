@@ -10,6 +10,7 @@
     "test": "bun test"
   },
   "devDependencies": {
-    "@types/bun": "^1.3.9"
+    "@types/bun": "^1.3.9",
+    "@webgpu/types": "^0.1.69"
   }
 }
