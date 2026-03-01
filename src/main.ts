@@ -28,7 +28,7 @@ if (!statusEl || !codeEl || !runEl || !resultEl) {
 const { vectorAdd, webgpuAvailable } = await import("./runtime/webgpu.ts");
 const { Tensor, BACKEND } = await import("./tensor.ts");
 statusEl.textContent = webgpuAvailable()
-  ? "WebGPU available. Run with Cmd/Ctrl+Enter. Persist values in state."
+  ? "WebGPU available. Run with Cmd/Ctrl+Enter."
   : "WebGPU unavailable in this browser";
 
 codeEl.value = localStorage.getItem(STORAGE_KEY) ?? DEFAULT_CODE;
