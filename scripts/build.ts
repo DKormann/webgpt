@@ -3,6 +3,8 @@ import { join } from "node:path";
 
 const cwd = process.cwd();
 const docsDir = join(cwd, "docs");
+const rawBase = process.env.PUBLIC_BASE ?? "/webgpt";
+const base = `/${rawBase.replace(/^\/+|\/+$/g, "")}`;
 
 rmSync(docsDir, { recursive: true, force: true });
 mkdirSync(docsDir, { recursive: true });
@@ -24,8 +26,8 @@ if (!result.success) {
 cpSync(join(cwd, "src/style.css"), join(docsDir, "style.css"));
 
 const html = readFileSync(join(cwd, "index.html"), "utf8")
-  .replace('href="/src/style.css"', 'href="/style.css"')
-  .replace('src="/src/main.ts"', 'src="/main.js"');
+  .replace(/href="\/(?:src\/)?style\.css"/, `href="${base}/style.css"`)
+  .replace(/src="\/(?:src\/)?main\.(?:ts|js)"/, `src="${base}/main.js"`);
 
 writeFileSync(join(docsDir, "index.html"), html);
 
