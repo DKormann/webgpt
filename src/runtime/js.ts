@@ -1,4 +1,5 @@
 import type { Shape, UOP } from "../uops.ts";
+import { buildPlan } from "./plan.ts";
 import type { RuntimeExec } from "./types.ts";
 
 type Compiled = (shape: Shape) => number[];
@@ -6,10 +7,12 @@ type Compiled = (shape: Shape) => number[];
 const scalar = (value: number): string => String(value);
 
 const generateCode = (uop: UOP): string => {
+  const plan = buildPlan(uop);
   const constIds = new Map<UOP, string>();
   const decls: string[] = [];
   const shapeIds = new Map<string, string>();
   const arrIds = new Map<string, string>();
+  let tmp = 0;
 
   const shapeId = (s: Shape): string => {
     const key = JSON.stringify(s);
@@ -30,38 +33,65 @@ const generateCode = (uop: UOP): string => {
     return id;
   };
 
-  const emitAt = (node: UOP, at: string, sh: string): string => {
+  const emitAt = (
+    node: UOP,
+    at: string,
+    sh: string,
+    scopeLines: string[],
+    scopeMemo: Map<string, string>
+  ): string => {
+    const key = `${plan.id(node)}|${at}|${sh}`;
+    const materialize = node !== uop && plan.refCount(node) > 1;
+    if (materialize) {
+      const hit = scopeMemo.get(key);
+      if (hit) return hit;
+    }
+
+    let expr: string;
     if (node.op === "CONST") {
       const len = node.data.length;
       const one = scalar(node.data[0] ?? 0);
-      if (len <= 1) return `(valid(${at},${sh})?${one}:0)`;
-      let id = constIds.get(node);
-      if (!id) {
-        id = `c${constIds.size}`;
-        constIds.set(node, id);
-        decls.push(`const ${id}=[${node.data.map(scalar).join(",")}];`);
+      if (len <= 1) expr = `(valid(${at},${sh})?${one}:0)`;
+      else {
+        let id = constIds.get(node);
+        if (!id) {
+          id = `c${constIds.size}`;
+          constIds.set(node, id);
+          decls.push(`const ${id}=[${node.data.map(scalar).join(",")}];`);
+        }
+        expr = `(valid(${at},${sh})?${id}[ridx(${at},${sh},${len})]:0)`;
       }
-      return `(valid(${at},${sh})?${id}[ridx(${at},${sh},${len})]:0)`;
-    }
-    if (node.op === "RANGE") return at;
-    if (node.op === "REDUCE") {
+    } else if (node.op === "RANGE") expr = at;
+    else if (node.op === "REDUCE") {
       const sid = shapeId(node.inShape);
       const did = arrId(node.dims);
-      const inner = emitAt(node.src, `mix(${at},r,${sh},${sid},${did})`, sid);
+      const reduceScopeLines: string[] = [];
+      const reduceScopeMemo = new Map<string, string>();
+      const inner = emitAt(node.src, `mix(${at},r,${sh},${sid},${did})`, sid, reduceScopeLines, reduceScopeMemo);
       const rnum = node.dims.map((d) => node.inShape.dims[d]).reduce((a, c) => a * c, 1);
       if (node.bin === "ADD") {
-        return `(()=>{let a=0;for(let r=0;r<${rnum};r++)a+=${inner};return a;})()`;
+        expr = `(()=>{let a=0;for(let r=0;r<${rnum};r++){${reduceScopeLines.join("")}a+=${inner};}return a;})()`;
+      } else {
+        expr = `(()=>{let a=1;for(let r=0;r<${rnum};r++){${reduceScopeLines.join("")}a*=${inner};}return a;})()`;
       }
-      return `(()=>{let a=1;for(let r=0;r<${rnum};r++)a*=${inner};return a;})()`;
+    } else {
+      const a = emitAt(node.srcs[0], at, shapeId(node.srcShapes[0]), scopeLines, scopeMemo);
+      const b = emitAt(node.srcs[1], at, shapeId(node.srcShapes[1]), scopeLines, scopeMemo);
+      expr = node.op === "ADD" ? `(${a}+${b})` : `(${a}*${b})`;
     }
-    const a = emitAt(node.srcs[0], at, shapeId(node.srcShapes[0]));
-    const b = emitAt(node.srcs[1], at, shapeId(node.srcShapes[1]));
-    if (node.op === "ADD") return `(${a}+${b})`;
-    if (node.op === "MUL") return `(${a}*${b})`;
-    return emitAt(node.srcs[0], b, sh);
+
+    if (materialize) {
+      const name = `v${tmp++}`;
+      scopeLines.push(`const ${name}=${expr};`);
+      scopeMemo.set(key, name);
+      return name;
+    }
+    return expr;
   };
 
-  const expr = emitAt(uop, "i", "shape");
+  const loopLines: string[] = [];
+  const loopMemo = new Map<string, string>();
+  const expr = emitAt(uop, "i", "shape", loopLines, loopMemo);
   return [
     '"use strict";',
     ...decls,
@@ -98,7 +128,10 @@ const generateCode = (uop: UOP): string => {
     "};",
     "const out = shape.numel;",
     "const result = new Array(out);",
-    `for (let i=0;i<out;i++) result[i]=${expr};`,
+    "for (let i=0;i<out;i++){",
+    ...loopLines.map((l) => `  ${l}`),
+    `  result[i]=${expr};`,
+    "}",
     "return result;"
   ].join("\n");
 };

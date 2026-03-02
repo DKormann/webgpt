@@ -1,15 +1,15 @@
 import type { Shape, UOP } from "../uops.ts";
+import { buildPlan } from "./plan.ts";
 import type { RuntimeExecAsync } from "./types.ts";
 
 let devicePromise: Promise<GPUDevice> | null = null;
 
-export const webgpuAvailable = (): boolean =>
-  typeof navigator !== "undefined" && "gpu" in navigator && !!navigator.gpu;
+export const webgpuAvailable = typeof navigator !== "undefined" && "gpu" in navigator && !!navigator.gpu;
 
 const getDevice = async (): Promise<GPUDevice> => {
   if (devicePromise) return devicePromise;
   devicePromise = (async () => {
-    if (!webgpuAvailable()) throw new Error("WebGPU unavailable");
+    if (!webgpuAvailable) throw new Error("WebGPU unavailable");
     const adapter = await navigator.gpu.requestAdapter();
     if (!adapter) throw new Error("No GPU adapter");
     return adapter.requestDevice();
@@ -27,11 +27,13 @@ const f32 = (v: number): string => {
 type ConstNode = { id: string; data: number[] };
 
 const genKernel = (uop: UOP, outShape: Shape) => {
+  const plan = buildPlan(uop);
   const constNodes = new Map<UOP, ConstNode>();
   const shapeFns = new Map<string, { id: string; shape: Shape }>();
   const reduceFns = new Map<UOP, string>();
   const helperFns: string[] = [];
   const reduceImpls: string[] = [];
+  let tmp = 0;
 
   const getShape = (s: Shape) => {
     const key = JSON.stringify(s);
@@ -129,26 +131,42 @@ const genKernel = (uop: UOP, outShape: Shape) => {
     return { name: id, code: lines.join("\n") };
   };
 
-  const emitAt = (node: UOP, at: string, shId: string): string => {
+  const emitAt = (
+    node: UOP,
+    at: string,
+    shId: string,
+    scopeLines: string[],
+    scopeMemo: Map<string, string>
+  ): string => {
+    const key = `${plan.id(node)}|${at}|${shId}`;
+    const materialize = node !== uop && plan.refCount(node) > 1;
+    if (materialize) {
+      const hit = scopeMemo.get(key);
+      if (hit) return hit;
+    }
+    let expr: string;
     if (node.op === "CONST") {
       const len = node.data.length;
-      if (len <= 1) return `select(0.0, ${f32(node.data[0] ?? 0)}, valid_${shId}(${at}))`;
-      let cn = constNodes.get(node);
-      if (!cn) {
-        cn = { id: `c${constNodes.size}`, data: node.data };
-        constNodes.set(node, cn);
+      if (len <= 1) expr = `select(0.0, ${f32(node.data[0] ?? 0)}, valid_${shId}(${at}))`;
+      else {
+        let cn = constNodes.get(node);
+        if (!cn) {
+          cn = { id: `c${constNodes.size}`, data: node.data };
+          constNodes.set(node, cn);
+        }
+        expr = `select(0.0, ${cn.id}[ridx_${shId}(${at}, ${len}u)], valid_${shId}(${at}))`;
       }
-      return `select(0.0, ${cn.id}[ridx_${shId}(${at}, ${len}u)], valid_${shId}(${at}))`;
-    }
-    if (node.op === "RANGE") return `f32(${at})`;
-    if (node.op === "REDUCE") {
+    } else if (node.op === "RANGE") expr = `f32(${at})`;
+    else if (node.op === "REDUCE") {
       const hit = reduceFns.get(node);
       if (hit) return `${hit}(${at})`;
       const inSid = getShape(node.inShape);
       const mixFn = mkMixFn(node);
       helperFns.push(mixFn.code);
       const mixName = mixFn.name;
-      const inner = emitAt(node.src, `${mixName}(oi, r)`, inSid);
+      const reduceScopeLines: string[] = [];
+      const reduceScopeMemo = new Map<string, string>();
+      const inner = emitAt(node.src, `${mixName}(oi, r)`, inSid, reduceScopeLines, reduceScopeMemo);
       const rnum = node.dims.map((d) => node.inShape.dims[d]).reduce((a, c) => a * c, 1);
       const rid = `red_${reduceFns.size}`;
       reduceFns.set(node, rid);
@@ -158,21 +176,32 @@ const genKernel = (uop: UOP, outShape: Shape) => {
         "  var r:u32 = 0u;",
         "  loop {",
         `    if (r >= ${Math.max(1, rnum)}u) { break; }`,
+        ...reduceScopeLines.map((l) => `    ${l}`),
         `    a = a ${node.bin === "ADD" ? "+" : "*"} ${inner};`,
         "    r = r + 1u;",
         "  }",
         "  return a;",
         "}"
       ].join("\n"));
-      return `${rid}(${at})`;
+      expr = `${rid}(${at})`;
+    } else {
+      const a = emitAt(node.srcs[0], at, getShape(node.srcShapes[0]), scopeLines, scopeMemo);
+      const b = emitAt(node.srcs[1], at, getShape(node.srcShapes[1]), scopeLines, scopeMemo);
+      expr = node.op === "ADD" ? `(${a}+${b})` : `(${a}*${b})`;
     }
-    const a = emitAt(node.srcs[0], at, getShape(node.srcShapes[0]));
-    const b = emitAt(node.srcs[1], at, getShape(node.srcShapes[1]));
-    return node.op === "ADD" ? `(${a}+${b})` : `(${a}*${b})`;
+    if (materialize) {
+      const name = `v${tmp++}`;
+      scopeLines.push(`let ${name}:f32 = ${expr};`);
+      scopeMemo.set(key, name);
+      return name;
+    }
+    return expr;
   };
 
   const outShapeId = getShape(outShape);
-  const expr = emitAt(uop, "i", outShapeId);
+  const mainScopeLines: string[] = [];
+  const mainScopeMemo = new Map<string, string>();
+  const expr = emitAt(uop, "i", outShapeId, mainScopeLines, mainScopeMemo);
 
   const constDecls = Array.from(constNodes.values()).map(
     (c, i) => `@group(0) @binding(${i}) var<storage, read> ${c.id}: array<f32>;`
@@ -192,6 +221,7 @@ const genKernel = (uop: UOP, outShape: Shape) => {
     "fn main(@builtin(global_invocation_id) gid: vec3<u32>) {",
     "  let i:u32 = gid.x;",
     `  if (i >= ${Math.max(1, outShape.numel)}u) { return; }`,
+    ...mainScopeLines.map((l) => `  ${l}`),
     `  out[i] = ${expr};`,
     "}"
   ].join("\n");
@@ -200,7 +230,7 @@ const genKernel = (uop: UOP, outShape: Shape) => {
 };
 
 export const execAsync: RuntimeExecAsync = async (uop, shape) => {
-  if (!webgpuAvailable()) throw new Error("WebGPU unavailable");
+  if (webgpuAvailable) throw new Error("WebGPU unavailable");
   const device = await getDevice();
   const { wgsl, constNodes, outBinding } = genKernel(uop, shape);
   const outSize = Math.max(1, shape.numel);

@@ -1,4 +1,5 @@
 import { execAsync, type RuntimeName } from "./runtime/index.ts";
+import { webgpuAvailable } from "./runtime/webgpu.ts";
 import type { Shape, UOP } from "./uops.ts";
 
 export type Raw = number | Raw[];
@@ -35,7 +36,7 @@ export type TensorData = {
 
 export type Tensor = TensorData & TensorMethods;
 
-export const BACKEND: { default: RuntimeName } = { default: "js" };
+export const BACKEND: { default?: RuntimeName } = { default:undefined };
 
 const mkShape = (dims: number[]): Shape => ({
   dims,
@@ -276,7 +277,7 @@ const mkTensor = (init: { uop: UOP; shape: Shape; requiresGrad?: boolean }): Ten
   };
 
   self.run = async (backend?: RuntimeName) => {
-    const flat = await execAsync(backend ?? BACKEND.default, self.uop, self.shape);
+    const flat = await execAsync(backend ?? BACKEND.default ?? (webgpuAvailable? "webgpu" :"js") , self.uop, self.shape);
     return nest(flat, self.shape.dims);
   };
 
