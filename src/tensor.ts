@@ -1,5 +1,5 @@
+
 import { execAsync, type RuntimeName } from "./runtime/index.ts";
-import { webgpuAvailable } from "./runtime/webgpu.ts";
 import type { Shape, UOP } from "./uops.ts";
 
 export type Raw = number | Raw[];
@@ -8,6 +8,9 @@ export type TensorOpts = { requiresGrad?: boolean };
 type TensorCtx = {
   backward: (gradOut: Tensor) => void;
 };
+
+
+
 
 type TensorMethods = {
   add: (b: Tensor) => Tensor;
@@ -23,6 +26,7 @@ type TensorMethods = {
   backward: (seed?: Tensor) => void;
   zeroGrad: () => void;
   detach: () => Tensor;
+  matmul: (b:Tensor) => Tensor;
 };
 
 export type TensorData = {
@@ -277,7 +281,7 @@ const mkTensor = (init: { uop: UOP; shape: Shape; requiresGrad?: boolean }): Ten
   };
 
   self.run = async (backend?: RuntimeName) => {
-    const flat = await execAsync(backend ?? BACKEND.default ?? (webgpuAvailable? "webgpu" :"js") , self.uop, self.shape);
+    const flat = await execAsync(backend ?? BACKEND.default ?? "js", self.uop, self.shape);
     return nest(flat, self.shape.dims);
   };
 
@@ -305,6 +309,15 @@ const mkTensor = (init: { uop: UOP; shape: Shape; requiresGrad?: boolean }): Ten
       if (t._ctx && t.grad) t._ctx.backward(t.grad);
     }
   };
+
+  self.matmul = (other:Tensor) =>{
+    let [A,B] = self.shape.dims;
+    let [B_,C] = other.shape.dims;
+    if (B!=B_) throw new Error("dimension missmatch")
+    return self.reshape([A,B,1]).expand([A,B,C])
+    .mul(other.reshape([1,B,C]).expand([A,B,C]))
+    .sum([1])
+  }
 
   return self;
 };

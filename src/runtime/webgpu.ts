@@ -1,10 +1,12 @@
 import type { Shape, UOP } from "../uops.ts";
+import { exec as jsExec } from "./js.ts";
 import { buildPlan } from "./plan.ts";
 import type { RuntimeExecAsync } from "./types.ts";
 
 let devicePromise: Promise<GPUDevice> | null = null;
 
-export const webgpuAvailable = typeof navigator !== "undefined" && "gpu" in navigator && !!navigator.gpu;
+export const webgpuAvailable =
+  typeof navigator !== "undefined" && "gpu" in navigator && !!navigator.gpu;
 
 const getDevice = async (): Promise<GPUDevice> => {
   if (devicePromise) return devicePromise;
@@ -95,7 +97,7 @@ const genKernel = (uop: UOP, outShape: Shape) => {
   };
 
   const mkMixFn = (node: Extract<UOP, { op: "REDUCE" }>): { name: string; code: string } => {
-    const id = `mix_${reduceFns.size}`;
+    const id = `mix_${plan.id(node)}`;
     const rd = new Set(node.dims);
     const outDims = node.inShape.dims.filter((_, i) => !rd.has(i));
     const lines = [
@@ -168,7 +170,7 @@ const genKernel = (uop: UOP, outShape: Shape) => {
       const reduceScopeMemo = new Map<string, string>();
       const inner = emitAt(node.src, `${mixName}(oi, r)`, inSid, reduceScopeLines, reduceScopeMemo);
       const rnum = node.dims.map((d) => node.inShape.dims[d]).reduce((a, c) => a * c, 1);
-      const rid = `red_${reduceFns.size}`;
+      const rid = `red_${plan.id(node)}`;
       reduceFns.set(node, rid);
       reduceImpls.push([
         `fn ${rid}(oi:u32) -> f32 {`,
@@ -226,12 +228,15 @@ const genKernel = (uop: UOP, outShape: Shape) => {
     "}"
   ].join("\n");
 
+  console.log(wgsl)
+
   return { wgsl, constNodes: Array.from(constNodes.values()), outBinding };
 };
 
 export const execAsync: RuntimeExecAsync = async (uop, shape) => {
-  if (webgpuAvailable) throw new Error("WebGPU unavailable");
-  const device = await getDevice();
+  if (!webgpuAvailable) return jsExec(uop, shape);
+  let device: GPUDevice;
+  device = await getDevice();
   const { wgsl, constNodes, outBinding } = genKernel(uop, shape);
   const outSize = Math.max(1, shape.numel);
   const bytes = outSize * 4;

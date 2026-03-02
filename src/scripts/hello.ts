@@ -10,5 +10,5 @@ type Ctx = {
 export const main = async ({ Tensor, BACKEND, webgpuAvailable }: Ctx) => {
   BACKEND.default = webgpuAvailable ? "webgpu" : "js";
   const t = Tensor.new([[1, 2, 3], [4, 5, 6]]);
-  return { res: t.run("webgpu") };
+  return await t.run();
 };
