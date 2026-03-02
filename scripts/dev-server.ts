@@ -6,19 +6,7 @@ const port = Number(process.env.PORT ?? 3000);
 const watchedPaths = [join(cwd, "index.html"), join(cwd, "src")];
 const clients = new Set<(payload: string) => void>();
 
-const liveReloadScript = `
-<script>
-  const es = new EventSource("/__reload");
-  es.addEventListener("reload", () => location.reload());
-</script>`;
 
-const sendReload = () => {
-  for (const push of clients) push("event: reload\\ndata: 1\\n\\n");
-};
-
-for (const path of watchedPaths) {
-  watch(path, { recursive: true }, () => sendReload());
-}
 
 const toFsPath = (pathname: string): string | null => {
   const clean = pathname.startsWith("/") ? pathname.slice(1) : pathname;
@@ -35,33 +23,8 @@ const server = Bun.serve({
     const url = new URL(req.url);
     const pathname = url.pathname;
 
-    if (pathname === "/__reload") {
-      let pushRef: ((payload: string) => void) | null = null;
-      const stream = new ReadableStream({
-        start(controller) {
-          const push = (payload: string) => controller.enqueue(payload);
-          pushRef = push;
-          clients.add(push);
-          push("event: ready\\ndata: 1\\n\\n");
-        },
-        cancel() {
-          if (pushRef) clients.delete(pushRef);
-        }
-      });
-      return new Response(stream, {
-        headers: {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          Connection: "keep-alive"
-        }
-      });
-    }
-
     if (pathname === "/") {
-      const html = readFileSync(join(cwd, "index.html"), "utf8").replace(
-        "</body>",
-        `${liveReloadScript}</body>`
-      );
+      const html = readFileSync(join(cwd, "index.html"), "utf8")
       return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
     }
 
@@ -69,10 +32,7 @@ const server = Bun.serve({
       if (pathname.startsWith("/src/")) {
         return new Response("Not found", { status: 404 });
       }
-      const html = readFileSync(join(cwd, "index.html"), "utf8").replace(
-        "</body>",
-        `${liveReloadScript}</body>`
-      );
+      const html = readFileSync(join(cwd, "index.html"), "utf8")
       return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
     }
 

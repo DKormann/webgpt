@@ -1,6 +1,6 @@
 
 import { execAsync, type RuntimeName } from "./runtime/index.ts";
-import type { Shape, UOP } from "./uops.ts";
+import { graphUOP, type UOPGraphItem, type Shape, type UOP } from "./uops.ts";
 
 export type Raw = number | Raw[];
 export type TensorOpts = { requiresGrad?: boolean };
@@ -27,6 +27,7 @@ type TensorMethods = {
   zeroGrad: () => void;
   detach: () => Tensor;
   matmul: (b:Tensor) => Tensor;
+  graph: () => UOPGraphItem[];
 };
 
 export type TensorData = {
@@ -318,6 +319,7 @@ const mkTensor = (init: { uop: UOP; shape: Shape; requiresGrad?: boolean }): Ten
     .mul(other.reshape([1,B,C]).expand([A,B,C]))
     .sum([1])
   }
+  self.graph = () => graphUOP(self.uop);
 
   return self;
 };
@@ -340,5 +342,8 @@ export const Tensor = {
       uop: { op: "CONST", data: flattenRaw(raw) },
       shape: shapeFromRaw(raw),
       requiresGrad: !!opts.requiresGrad
-    })
+    }),
+
+  graph: (x: Tensor | UOP): UOPGraphItem[] => graphUOP("uop" in x ? x.uop : x),
+  logGraph: (x: Tensor | UOP): void => console.table(graphUOP("uop" in x ? x.uop : x))
 };

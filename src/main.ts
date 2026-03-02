@@ -3,10 +3,16 @@ import { vectorAdd, webgpuAvailable } from "./runtime/webgpu.ts";
 import { renderTemplate } from "./template.ts";
 
 const STORAGE_KEY = "playground_code_v1";
-const DEFAULT_CODE = `const t = Tensor.new([[1,2,3],[4,5,6]]);
-const sum1 = await t.sum([1]).run("webgpu");
-const prod0 = await t.prod([0]).run("webgpu");
-return { webgpu: webgpuAvailable, sum1, prod0 };`;
+const DEFAULT_CODE = `
+const N = 100;
+const x = Tensor.new([N,N])
+const y = Tensor.new([N,N])
+const st = performance.now();
+const r = x.matmul(y).sum().run()
+const GFLOPS = (performance.now()-st) / 1e9 / N**3*2
+return {GFLOPS}
+
+`;
 const state: Record<string, unknown> = {};
 type ScriptCtx = { Tensor: typeof Tensor; BACKEND: typeof BACKEND; webgpuAvailable: boolean };
 type ScriptMod = { main: (ctx: ScriptCtx) => Promise<unknown> | unknown };

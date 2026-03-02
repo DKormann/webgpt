@@ -229,6 +229,7 @@ const genKernel = (uop: UOP, outShape: Shape) => {
     "}"
   ].join("\n");
 
+  console.log(wgsl)
   return { wgsl, constNodes: Array.from(constNodes.values()), outBinding };
 };
 
