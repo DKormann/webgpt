@@ -159,6 +159,8 @@ const genKernel = (uop: UOP, outShape: Shape) => {
         }
         expr = `select(0.0, ${cn.id}[ridx_${shId}(${at}, ${len}u)], valid_${shId}(${at}))`;
       }
+    } else if (node.op === "RAND") {
+      expr = `select(0.0, randv(idx_${shId}(${at}), ${node.seed}), valid_${shId}(${at}))`;
     } else if (node.op === "RANGE") expr = `f32(${at})`;
     else if (node.op === "REDUCE") {
       const hit = reduceFns.get(node);
@@ -218,6 +220,13 @@ const genKernel = (uop: UOP, outShape: Shape) => {
     ...constDecls,
     outDecl,
     ...shapeImpls,
+    "fn randv(j:i32, s:i32) -> f32 {",
+    "  var x:u32 = bitcast<u32>(j ^ s ^ i32(0x9e3779b9u));",
+    "  x = x ^ (x << 13u);",
+    "  x = x ^ (x >> 17u);",
+    "  x = x ^ (x << 5u);",
+    "  return f32(x) * 2.3283064365386963e-10;",
+    "}",
     ...helperFns,
     ...reduceImpls,
     "@compute @workgroup_size(64)",

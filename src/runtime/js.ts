@@ -61,6 +61,8 @@ const generateCode = (uop: UOP): string => {
         }
         expr = `(valid(${at},${sh})?${id}[ridx(${at},${sh},${len})]:0)`;
       }
+    } else if (node.op === "RAND") {
+      expr = `(valid(${at},${sh})?randv(idx(${at},${sh}),${node.seed | 0}):0)`;
     } else if (node.op === "RANGE") expr = at;
     else if (node.op === "REDUCE") {
       const sid = shapeId(node.inShape);
@@ -115,6 +117,7 @@ const generateCode = (uop: UOP): string => {
     "  return true;",
     "};",
     "const ridx=(i,s,l)=>{const j=idx(i,s);return ((j%l)+l)%l;};",
+    "const randv=(j,seed)=>{let x=((j|0)^(seed|0)^0x9e3779b9)|0;x^=x<<13;x^=x>>>17;x^=x<<5;return (x>>>0)/4294967296;};",
     "const has=(a,v)=>{for(let i=0;i<a.length;i++) if(a[i]===v) return true; return false;};",
     "const mix=(oi,ri,os,is,rd)=>{",
     "  let li=0,m=1,od=os.dims.length-1;",

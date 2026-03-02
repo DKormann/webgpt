@@ -20,6 +20,10 @@ export type UOP =
       count: number
     }
   | {
+      op: "RAND";
+      seed: number;
+    }
+  | {
       op: "REDUCE";
       bin: Binop,
       src: UOP,
@@ -37,6 +41,7 @@ const uopKids = (u: UOP): UOP[] => (u.op === "REDUCE" ? [u.src] : u.op === "ADD"
 const uopLine = (u: UOP): string => {
   if (u.op === "CONST") return `CONST len=${u.data.length}`;
   if (u.op === "RANGE") return `RANGE count=${u.count}`;
+  if (u.op === "RAND") return `RAND seed=${u.seed}`;
   if (u.op === "REDUCE") return `REDUCE ${u.bin} dims=[${u.dims.join(",")}] in=[${u.inShape.dims.join("x")}]`;
   return `${u.op} a=[${u.srcShapes[0].dims.join("x")}] b=[${u.srcShapes[1].dims.join("x")}]`;
 };

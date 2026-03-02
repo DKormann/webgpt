@@ -1,6 +1,7 @@
 
 import { execAsync, type RuntimeName } from "./runtime/index.ts";
 import { graphUOP, type UOPGraphItem, type Shape, type UOP } from "./uops.ts";
+import { linear as nnLinear, matmul as nnMatmul } from "./nn.ts";
 
 export type Raw = number | Raw[];
 export type TensorOpts = { requiresGrad?: boolean };
@@ -26,7 +27,7 @@ type TensorMethods = {
   backward: (seed?: Tensor) => void;
   zeroGrad: () => void;
   detach: () => Tensor;
-  matmul: (b:Tensor) => Tensor;
+  matmul: (b: Tensor) => Tensor;
   graph: () => UOPGraphItem[];
 };
 
@@ -311,14 +312,7 @@ const mkTensor = (init: { uop: UOP; shape: Shape; requiresGrad?: boolean }): Ten
     }
   };
 
-  self.matmul = (other:Tensor) =>{
-    let [A,B] = self.shape.dims;
-    let [B_,C] = other.shape.dims;
-    if (B!=B_) throw new Error("dimension missmatch")
-    return self.reshape([A,B,1]).expand([A,B,C])
-    .mul(other.reshape([1,B,C]).expand([A,B,C]))
-    .sum([1])
-  }
+  self.matmul = (other: Tensor) => nnMatmul(self, other);
   self.graph = () => graphUOP(self.uop);
 
   return self;
@@ -331,7 +325,7 @@ export const Tensor = {
   rand: (dims: number[], opts: TensorOpts = {}): Tensor => {
     const shape = mkShape(dims);
     return mkTensor({
-      uop: { op: "CONST", data: Array.from({ length: shape.numel }, () => Math.random()) },
+      uop: { op: "RAND", seed: (Math.random() * 0x7fffffff) | 0 },
       shape,
       requiresGrad: !!opts.requiresGrad
     });
@@ -343,6 +337,8 @@ export const Tensor = {
       shape: shapeFromRaw(raw),
       requiresGrad: !!opts.requiresGrad
     }),
+
+  linear: (input: Tensor, weight: Tensor, bias?: Tensor): Tensor => nnLinear(input, weight, bias),
 
   graph: (x: Tensor | UOP): UOPGraphItem[] => graphUOP("uop" in x ? x.uop : x),
   logGraph: (x: Tensor | UOP): void => console.table(graphUOP("uop" in x ? x.uop : x))

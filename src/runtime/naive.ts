@@ -29,6 +29,14 @@ const has = (a: number[], v: number): boolean => {
   return false;
 };
 
+const randAt = (j: number, seed: number): number => {
+  let x = (j | 0) ^ (seed | 0) ^ 0x9e3779b9;
+  x ^= x << 13;
+  x ^= x >>> 17;
+  x ^= x << 5;
+  return (x >>> 0) / 4294967296;
+};
+
 const mix = (oi: number, ri: number, os: Shape, ins: Shape, rd: number[]): number => {
   let li = 0;
   let m = 1;
@@ -59,6 +67,11 @@ const valueAt = (node: UOP, i: number, s: Shape): number => {
     return node.data[j];
   }
   if (node.op === "RANGE") return i;
+  if (node.op === "RAND") {
+    const c = coords(i, s.dims);
+    if (!valid(c, s)) return 0;
+    return randAt(baseIndex(c, s), node.seed);
+  }
   if (node.op === "REDUCE") {
     let acc = node.bin === "ADD" ? 0 : 1;
     const rnum = node.dims.map((d) => node.inShape.dims[d]).reduce((a, c) => a * c, 1);
