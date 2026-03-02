@@ -39,4 +39,10 @@ describe("tensor runtime parity", () => {
     await compare(t.prod([0]));
     await compare(t.prod([1]));
   });
+
+  test("matmul parity", async () => {
+    const a = T.new([[1, 2, 3], [4, 5, 6]]);
+    const b = T.new([[1, 2], [3, 4], [5, 6]]);
+    await compare(a.matmul(b));
+  });
 });

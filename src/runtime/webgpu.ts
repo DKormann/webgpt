@@ -1,5 +1,6 @@
-import type { Shape, UOP } from "../uops.ts";
+import type { LinearMatmul, Shape, UOP } from "../uops.ts";
 import { exec as jsExec } from "./js.ts";
+import { linearize } from "./linearize.ts";
 import { buildPlan } from "./plan.ts";
 import type { RuntimeExecAsync } from "./types.ts";
 
@@ -228,13 +229,86 @@ const genKernel = (uop: UOP, outShape: Shape) => {
     "}"
   ].join("\n");
 
-  console.log(wgsl)
-
   return { wgsl, constNodes: Array.from(constNodes.values()), outBinding };
 };
 
-export const execAsync: RuntimeExecAsync = async (uop, shape) => {
-  if (!webgpuAvailable) return jsExec(uop, shape);
+const runLinearMatmul = async (p: LinearMatmul): Promise<number[]> => {
+  const device = await getDevice();
+  const [TM, TN, TK] = p.tile;
+  const wgsl = [
+    "@group(0) @binding(0) var<storage, read> A: array<f32>;",
+    "@group(0) @binding(1) var<storage, read> B: array<f32>;",
+    "@group(0) @binding(2) var<storage, read_write> C: array<f32>;",
+    `var<workgroup> As: array<array<f32, ${TK}>, ${TM}>;`,
+    `var<workgroup> Bs: array<array<f32, ${TN}>, ${TK}>;`,
+    `@compute @workgroup_size(${p.workgroup[0]}, ${p.workgroup[1]}, ${p.workgroup[2]})`,
+    "fn main(",
+    "  @builtin(workgroup_id) wg: vec3<u32>,",
+    "  @builtin(local_invocation_id) lid: vec3<u32>",
+    ") {",
+    `  let row:u32 = wg.y * ${TM}u + lid.y;`,
+    `  let col:u32 = wg.x * ${TN}u + lid.x;`,
+    "  var acc:f32 = 0.0;",
+    "  var k0:u32 = 0u;",
+    "  loop {",
+    `    if (k0 >= ${p.K}u) { break; }`,
+    "    let ka:u32 = k0 + lid.x;",
+    "    let kb:u32 = k0 + lid.y;",
+    `    if (row < ${p.M}u && ka < ${p.K}u) { As[lid.y][lid.x] = A[row * ${p.K}u + ka]; } else { As[lid.y][lid.x] = 0.0; }`,
+    `    if (kb < ${p.K}u && col < ${p.N}u) { Bs[lid.y][lid.x] = B[kb * ${p.N}u + col]; } else { Bs[lid.y][lid.x] = 0.0; }`,
+    "    workgroupBarrier();",
+    `    for (var k:u32 = 0u; k < ${TK}u; k = k + 1u) {`,
+    "      acc = acc + As[lid.y][k] * Bs[k][lid.x];",
+    "    }",
+    "    workgroupBarrier();",
+    `    k0 = k0 + ${TK}u;`,
+    "  }",
+    `  if (row < ${p.M}u && col < ${p.N}u) { C[row * ${p.N}u + col] = acc; }`,
+    "}"
+  ].join("\n");
+
+  const a = new Float32Array(p.a.data);
+  const b = new Float32Array(p.b.data);
+  const outSize = p.M * p.N;
+  const outBytes = outSize * 4;
+  const aBuf = device.createBuffer({ size: Math.max(4, a.byteLength), usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  const bBuf = device.createBuffer({ size: Math.max(4, b.byteLength), usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  const outBuf = device.createBuffer({ size: outBytes, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+  const readBuf = device.createBuffer({ size: outBytes, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+  device.queue.writeBuffer(aBuf, 0, a.buffer);
+  device.queue.writeBuffer(bBuf, 0, b.buffer);
+
+  const module = device.createShaderModule({ code: wgsl });
+  const pipeline = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "main" } });
+  const bind = device.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: aBuf } },
+      { binding: 1, resource: { buffer: bBuf } },
+      { binding: 2, resource: { buffer: outBuf } }
+    ]
+  });
+
+  const encoder = device.createCommandEncoder();
+  const pass = encoder.beginComputePass();
+  pass.setPipeline(pipeline);
+  pass.setBindGroup(0, bind);
+  pass.dispatchWorkgroups(Math.ceil(p.N / TN), Math.ceil(p.M / TM), 1);
+  pass.end();
+  encoder.copyBufferToBuffer(outBuf, 0, readBuf, 0, outBytes);
+  device.queue.submit([encoder.finish()]);
+
+  await readBuf.mapAsync(GPUMapMode.READ);
+  const copy = new Float32Array(readBuf.getMappedRange().slice(0));
+  readBuf.unmap();
+  aBuf.destroy();
+  bBuf.destroy();
+  outBuf.destroy();
+  readBuf.destroy();
+  return Array.from(copy).slice(0, outSize);
+};
+
+const runKernel = async (uop: UOP, shape: Shape): Promise<number[]> => {
   let device: GPUDevice;
   device = await getDevice();
   const { wgsl, constNodes, outBinding } = genKernel(uop, shape);
@@ -294,6 +368,21 @@ export const execAsync: RuntimeExecAsync = async (uop, shape) => {
   readBuf.destroy();
 
   return Array.from(copy).slice(0, shape.numel);
+};
+
+export const execAsync: RuntimeExecAsync = async (uop, shape) => {
+  if (!webgpuAvailable) return jsExec(uop, shape);
+  const p = linearize(uop);
+  if (p) return runLinearMatmul(p);
+
+  // Split nested reductions into two kernels so the inner reduction can run in parallel.
+  if (uop.op === "REDUCE" && uop.src.op === "REDUCE") {
+    const mid = await execAsync(uop.src, uop.inShape);
+    const staged: UOP = { ...uop, src: { op: "CONST", data: mid } };
+    return runKernel(staged, shape);
+  }
+
+  return runKernel(uop, shape);
 };
 
 export const vectorAdd = async (aIn: number[], bIn: number[]): Promise<number[]> => {
