@@ -9,6 +9,12 @@ export type BUFFER = {
   buf: RAWBUFFER
 }
 
+
+export type View = {
+  dims: number[],
+  strides: number[]
+}
+
 export type UOp = {
   op: "STORE",
   srcs: [
@@ -46,8 +52,11 @@ export type UOp = {
   op: "CONST",
   srcs: [],
   val: number
+} | {
+  op: "VIEW",
+  srcs: [UOp],
+  views: View[]
 }
-
 export type HighGraph = UOp & { op: "CONST" | "BUFFER" | BinOp | "REDUCE" | MoveOp }
 
 export type LowGraph = UOp & { op: "CONST" | "BUFFER" | BinOp | "REDUCE" | "RANGE" | "ENDRANGE" | "INDEX" | "STORE" } & {srcs: LowGraph[]}

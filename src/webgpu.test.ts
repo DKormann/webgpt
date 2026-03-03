@@ -21,7 +21,8 @@ describe("low level webgpu test",()=>{
     let kernel = Device.createKernel(
       [uop.store(
         uop.const (22),
-        uop.index(uop.buffer(buf), uop.const(0))
+        uop.buffer(buf),
+        uop.const(0)
       ) as LowGraph],
       [buf]
     )
@@ -31,7 +32,7 @@ describe("low level webgpu test",()=>{
 
   })
 
-  test("kernel range",async ()=>{
+  test("kernel: range",async ()=>{
     let buffer = Device.createBuffer(10)
 
     let buf = uop.buffer(buffer)
