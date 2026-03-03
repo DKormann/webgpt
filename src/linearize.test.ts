@@ -13,30 +13,28 @@ describe("linearize",()=>{
     let output = device.createBuffer(1)
 
     let ing:UOp = {
-      op: "VIEW",
-      views: [{ dims: [10], strides: [1] }],
-      srcs: [uop.buffer(input)]
+      ...uop.view(
+        uop.buffer(input),
+        [{ dims: [10], strides: [1] }]
+      )
     }
-    let outg:UOp = {
-      op: "VIEW",
-      views: [{ dims: [1], strides: [1] }],
-      srcs: [uop.buffer(output)]
-    }
-    let store:UOp = uop.store(
-      {
-        op:"REDUCE",
-        bin: "ADD",
-        srcs: [ing],
-        axis: 0
-      },
-      outg,
+    let outg:UOp = uop.view(
+      uop.buffer(output),
+      [{ dims: [1], strides: [1] }]
     )
-
+    let store:UOp = uop.store(
+      uop.reduce(ing, 0, "ADD"),
+      outg
+    )
 
     const low = linearize(store)
     let rang = uop.range(10)
 
     const kern:UOp[] = [
+      uop.store(
+        uop.const(0),
+        uop.index(uop.buffer(output), uop.const(0))
+      ),
       rang,
       uop.store(
         uop.add(
@@ -49,8 +47,7 @@ describe("linearize",()=>{
             rang
           )
         ),
-        uop.buffer(output),
-        uop.const(0)
+        uop.index(uop.buffer(output), uop.const(0))
       ),
       uop.endrange(rang)
     ] 

@@ -141,20 +141,9 @@ const codegenStore = (graph: UOp[], buffers: WEBGPUBUFFER[]): string => {
     if (g.op !== "STORE") throw new Error(`unsupported root op: ${g.op}`);
     const src = g.srcs[0] as LowGraph;
     const dst = g.srcs[1] as LowGraph;
-    const idxArg = g.srcs[2] as LowGraph;
-
-    let base: LowGraph;
-    let idx: LowGraph;
-    if (dst.op === "BUFFER") {
-      base = dst;
-      idx = idxArg;
-    } else if (dst.op === "INDEX") {
-      // Backward compatibility for older tests/builders.
-      base = dst.srcs[0] as LowGraph;
-      idx = dst.srcs[1] as LowGraph;
-    } else {
-      throw new Error(`unsupported store dst: ${dst.op}`);
-    }
+    if (dst.op !== "INDEX") throw new Error(`unsupported store dst: ${dst.op}`);
+    const base = dst.srcs[0] as LowGraph;
+    const idx = dst.srcs[1] as LowGraph;
     if (base.op !== "BUFFER") throw new Error(`unsupported index base: ${base.op}`);
     const binding = buffers.findIndex((b) => b === (base.buf as WEBGPUBUFFER));
     if (binding < 0) throw new Error("graph references unknown kernel buffer");

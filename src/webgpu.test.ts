@@ -21,8 +21,7 @@ describe("low level webgpu test",()=>{
     let kernel = Device.createKernel(
       [uop.store(
         uop.const (22),
-        uop.buffer(buf),
-        uop.const(0)
+        uop.index(uop.buffer(buf), uop.const(0))
       ) as LowGraph],
       [buf]
     )
@@ -40,7 +39,7 @@ describe("low level webgpu test",()=>{
 
     let kernel = Device.createKernel([
       range,
-      uop.store( range, buf, range),
+      uop.store( range, uop.index(buf, range)),
       uop.endrange(range),
     ],
       [buffer]
@@ -61,9 +60,9 @@ describe("low level webgpu test",()=>{
 
 
     let kernel = Device.createKernel([
-      uop.store( uop.const(0), buf, uop.const(0)),
+      uop.store( uop.const(0), uop.index(buf, uop.const(0))),
       range,
-      uop.store( uop.add(uop.index(buf, uop.const(0)), range), buf, uop.const(0)),
+      uop.store( uop.add(uop.index(buf, uop.const(0)), range), uop.index(buf, uop.const(0))),
       uop.endrange(range),
     ], [buffer])
 

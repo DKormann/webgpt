@@ -1,43 +1,116 @@
-import { RAWBUFFER, UOp } from "./types";
+import { RAWBUFFER, UOp, View } from "./types";
 import { uop } from "./uops";
 
+const isView = (x: UOp): x is UOp & { op: "VIEW"; srcs: [UOp]; views: View[] } => x.op === "VIEW";
+const isBuffer = (x: UOp): x is UOp & { op: "BUFFER" } => x.op === "BUFFER";
 
+const resolveBuffer = (x: UOp): UOp & { op: "BUFFER" } => {
+  if (isBuffer(x)) return x;
+  if (isView(x)) return resolveBuffer(x.srcs[0]);
+  throw new Error(`linearize expected BUFFER/VIEW base, got ${x.op}`);
+};
 
+const indexFromView = (view: View, ranges: UOp[]): UOp => {
+  const n = view.dims.length;
+  const use = ranges.slice(Math.max(0, ranges.length - n));
 
-export const linearize = (graph: UOp) : UOp[] =>{
-  if (graph.op !== "REDUCE") throw new Error(`linearize unsupported root op: ${graph.op}`);
-  if (graph.bin !== "ADD") throw new Error(`linearize only supports ADD reduce for now`);
-  if (graph.srcs.length !== 1) throw new Error("REDUCE expects one source");
+  let idx: UOp = uop.const(0);
+  for (let i = 0; i < n; i++) {
+    const stride = view.strides[i] ?? 0;
+    const r = use[i] ?? uop.const(0);
+    const term = stride === 1 ? r : uop.mul(r, uop.const(stride));
+    idx = i === 0 ? term : uop.add(idx, term);
+  }
+  return idx;
+};
 
-  const src = graph.srcs[0];
-  if (src.op !== "VIEW") throw new Error(`linearize expects VIEW source, got ${src.op}`);
-  if (src.views.length !== 1) throw new Error("linearize expects exactly one VIEW descriptor");
-  if (src.srcs.length !== 1) throw new Error("VIEW expects one source");
-
-  const view = src.views[0];
-  if (view.dims.length !== 1 || view.strides.length !== 1 || view.strides[0] !== 1) {
-    throw new Error("linearize currently supports only 1D contiguous views");
+const lowerExpr = (node: UOp, loops: UOp[]): UOp => {
+  if (isView(node)) {
+    const view = node.views[node.views.length - 1];
+    const base = resolveBuffer(node.srcs[0]);
+    return uop.index(base, indexFromView(view, loops));
   }
 
-  const base = src.srcs[0];
-  if (base.op !== "BUFFER") throw new Error(`VIEW source must be BUFFER, got ${base.op}`);
+  if (node.op === "ADD" || node.op === "MUL") {
+    return {
+      op: node.op,
+      srcs: [lowerExpr(node.srcs[0], loops), lowerExpr(node.srcs[1], loops)]
+    } as UOp;
+  }
 
-  const out = buffs[0] ?? base.buf;
-  const outBuf = uop.buffer(out);
-  const inBuf = uop.buffer(base.buf);
+  if (node.op === "INDEX") {
+    return uop.index(lowerExpr(node.srcs[0], loops), lowerExpr(node.srcs[1], loops));
+  }
 
+  return node;
+};
+
+const linearizeStore = (graph: UOp & { op: "STORE" }): UOp[] => {
+  const src = graph.srcs[0];
+  const dst = graph.srcs[1];
+
+  if (src.op === "REDUCE" && src.bin === "ADD") {
+    const reducedSrc = src.srcs[0];
+    const outBase = isView(dst) ? resolveBuffer(dst.srcs[0]) : isBuffer(dst) ? dst : resolveBuffer(dst.srcs[0]!);
+    const outIdx = isView(dst)
+      ? indexFromView(dst.views[dst.views.length - 1], [])
+      : dst.op === "INDEX"
+        ? lowerExpr(dst.srcs[1], [])
+        : uop.const(0);
+
+    const max = isView(reducedSrc) ? reducedSrc.views[reducedSrc.views.length - 1].dims[src.axis] : outBase.buf.size;
+    const r = uop.range(max);
+    const term = lowerExpr(reducedSrc, [r]);
+
+    return [
+      uop.store(uop.const(0), uop.index(outBase, outIdx)),
+      r,
+      uop.store(uop.add(uop.index(outBase, outIdx), term), uop.index(outBase, outIdx)),
+      uop.endrange(r)
+    ];
+  }
+
+  if (isView(dst)) {
+    const view = dst.views[dst.views.length - 1];
+    const ranges = view.dims.map((d) => uop.range(d));
+    const base = resolveBuffer(dst.srcs[0]);
+    const store = uop.store(lowerExpr(src, ranges), uop.index(base, indexFromView(view, ranges)));
+    return [...ranges, store, ...ranges.slice().reverse().map((r) => uop.endrange(r as UOp & { op: "RANGE" }))];
+  }
+
+  if (isBuffer(dst)) {
+    return [uop.store(lowerExpr(src, []), uop.index(dst, uop.const(0)))];
+  }
+
+  if (dst.op === "INDEX") {
+    return [uop.store(lowerExpr(src, []), lowerExpr(dst, []))];
+  }
+
+  throw new Error(`linearize STORE destination unsupported: ${dst.op}`);
+};
+
+const linearizeReduce = (graph: UOp & { op: "REDUCE" }, buffs?: RAWBUFFER[]): UOp[] => {
+  if (graph.bin !== "ADD") throw new Error(`linearize only supports ADD reduce for now`);
+
+  const src = graph.srcs[0];
+  const base = resolveBuffer(src);
+  const out = uop.buffer((buffs?.[0] ?? base.buf) as RAWBUFFER);
   const zero = uop.const(0);
-  const range = uop.range(view.dims[0]);
+
+  const max = isView(src) ? src.views[src.views.length - 1].dims[graph.axis] : out.buf.size;
+  const r = uop.range(max);
+  const rhs = lowerExpr(src, [r]);
 
   return [
-    uop.store(zero, outBuf, zero),
-    range,
-    uop.store(
-      uop.add(uop.index(outBuf, zero), uop.index(inBuf, range)),
-      outBuf,
-      zero
-    ),
-    uop.endrange(range)
+    uop.store(zero, uop.index(out, zero)),
+    r,
+    uop.store(uop.add(uop.index(out, zero), rhs), uop.index(out, zero)),
+    uop.endrange(r)
   ];
+};
 
-}
+export const linearize = (graph: UOp, buffs?: RAWBUFFER[]): UOp[] => {
+  if (graph.op === "STORE") return linearizeStore(graph as UOp & { op: "STORE" });
+  if (graph.op === "REDUCE") return linearizeReduce(graph as UOp & { op: "REDUCE" }, buffs);
+  return [lowerExpr(graph, [])];
+};

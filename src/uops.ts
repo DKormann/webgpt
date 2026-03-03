@@ -1,4 +1,4 @@
-import { RAWBUFFER, UOp } from "./types";
+import { BinOp, RAWBUFFER, UOp, View } from "./types";
 
 
 export const uop
@@ -6,6 +6,7 @@ export const uop
 = {
 
   add: (a:UOp, b:UOp):UOp=> ({op: "ADD", srcs:[a,b]}),
+  mul: (a:UOp, b:UOp):UOp=> ({op: "MUL", srcs:[a,b]}),
 
   buffer : (buf: RAWBUFFER):UOp & {op:"BUFFER"}=> ({
     op:"BUFFER",
@@ -23,12 +24,25 @@ export const uop
     srcs:[]
   }),
 
+  view: (src: UOp, views: View[]): UOp & { op: "VIEW" } => ({
+    op: "VIEW",
+    srcs: [src],
+    views
+  }),
+
+  reduce: (src: UOp, axis: number, bin: BinOp): UOp & { op: "REDUCE" } => ({
+    op: "REDUCE",
+    srcs: [src],
+    axis,
+    bin
+  }),
+
 
   store :  (src: UOp, dest: UOp, index?:UOp) : UOp & {op:"STORE"} =>({
     op: "STORE",
     srcs: [
       src,
-      index == undefined ? dest : uop.index(dest, index ),
+      index ? uop.index(dest, index) : dest
     ]
   }),
   index: (buf: UOp, index: UOp): UOp => ({op:"INDEX", srcs:[buf,index]})
