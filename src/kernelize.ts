@@ -1,19 +1,7 @@
-import { RAWBUFFER, UOp } from "./types";
+import { RAWBUFFER, TensorShape, UOp } from "./types";
 import { uop } from "./uops";
 
-export type TensorShape = {
-  dims: number[];
-  strides: number[];
-  numel: number;
-  offset?: number;
-  mask?: [number, number][];
-};
-
-export type TensorUOp = UOp & {op: ("CONST" | "CONST"| "RAND"| "MUL") }
-
-
-
-export type TensorLike = { uop: TensorUOp; shape: TensorShape };
+export type TensorLike = { uop: UOp; shape: TensorShape };
 
 export type Kernelized = {
   graph: UOp;
@@ -37,11 +25,12 @@ const makeBuffer = (data: number[]): RAWBUFFER => {
   };
 };
 
-const materializeLeaf = (uop: TensorUOp, shape: TensorShape): number[] => {
+const materializeLeaf = (uop: UOp, shape: TensorShape): number[] => {
   if (uop.op === "CONST") {
     const out = new Array<number>(shape.numel);
-    const len = uop.data.length;
-    for (let i = 0; i < shape.numel; i++) out[i] = len ? uop.data[((i % len) + len) % len] : 0;
+    const data = uop.data ?? [uop.val ?? 0];
+    const len = data.length;
+    for (let i = 0; i < shape.numel; i++) out[i] = len ? data[((i % len) + len) % len] : 0;
     return out;
   }
   if (uop.op === "RAND") {
@@ -53,7 +42,7 @@ const materializeLeaf = (uop: TensorUOp, shape: TensorShape): number[] => {
 };
 
 const toExpr = (
-  node: TensorUOp,
+  node: UOp,
   shape: TensorShape,
   bufs: RAWBUFFER[]
 ): UOp => {
@@ -63,7 +52,7 @@ const toExpr = (
     return uop.view(uop.buffer(b), [{ dims: shape.dims, strides: shape.strides }]);
   }
   if (node.op === "MUL") {
-    return uop.mul(toExpr(node.srcs[0], node.srcShapes[0], bufs), toExpr(node.srcs[1], node.srcShapes[1], bufs));
+    return uop.mul(toExpr(node.srcs[0], shape, bufs), toExpr(node.srcs[1], shape, bufs));
   }
   throw new Error(`kernelize expression unsupported op: ${node.op}`);
 };

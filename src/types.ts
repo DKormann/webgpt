@@ -15,6 +15,14 @@ export type View = {
   strides: number[]
 }
 
+export type TensorShape = {
+  dims: number[];
+  strides: number[];
+  numel: number;
+  offset?: number;
+  mask?: [number, number][];
+}
+
 export type UOp = {
   op: "STORE",
   srcs: [
@@ -50,11 +58,20 @@ export type UOp = {
 } | {
   op: "CONST",
   srcs: [],
-  val: number
+  val?: number,
+  data?: number[]
+} | {
+  op: "RAND",
+  srcs: [],
+  seed: number
 } | {
   op: "VIEW",
   srcs: [UOp],
   views: View[]
+} | {
+  op: "MATMUL",
+  srcs: [UOp, UOp],
+  srcShapes: [TensorShape, TensorShape]
 }
 export type HighGraph = UOp & { op: "CONST" | "BUFFER" | BinOp | "REDUCE" | MoveOp }
 

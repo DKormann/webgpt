@@ -4,8 +4,8 @@ import { kernelize } from "./kernelize";
 
 describe("kernelize", () => {
   test("matmul tensor graph creates output and input buffers", async () => {
-
-    
+    const a = Tensor.new([[1, 2, 3], [4, 5, 6]]);
+    const b = Tensor.new([[7, 8], [9, 10], [11, 12]]);
     const c = a.matmul(b);
 
     const out = kernelize(c);
