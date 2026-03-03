@@ -18,6 +18,4 @@ describe("kernelize", () => {
     expect(sched.items[0].Buffers[0].size).toEqual(16)
 
   })
-
-
 });

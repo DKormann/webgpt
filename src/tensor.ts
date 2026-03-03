@@ -63,8 +63,8 @@ const mkTensor = (graph: UOp, shape: TensorShape): Tensor => {
     return mkTensor(
       uop.reduce(
         uop.mul(
-          self.reshape([m,k,1]).expand([m,k,n]).uop,
-          self.reshape([1,k,n]).expand([m,k,n]).uop
+          uop.view(self.uop, [{ dims: [m, k, n], strides: [k, 1, 0] }]),
+          uop.view(other.uop, [{ dims: [m, k, n], strides: [0, n, 1] }])
         ),
         1, "ADD"
       ),
