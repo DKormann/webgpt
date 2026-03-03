@@ -13,5 +13,18 @@ All smartness should live in the UOP graph:
 
 Goal: backend codegen stays platform-independent because it only lowers explicit UOP intent.
 
-Short-term exception:
-- `matmul` may emit a specific hardcoded optimized UOP subgraph for now.
+
+
+## LAYOUT
+
+1. Tensor: high level frontend for Tensor data
+
+
+2. Kernelize: break up Tensor into what later becomes kernels. each one is a set of stores.
+
+
+3. linearize: create low level graph. translate all views into ranges and indexes.
+
+
+4. backend: generate shader code to run the kernels
+

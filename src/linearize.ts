@@ -10,6 +10,16 @@ const resolveBuffer = (x: UOp): UOp & { op: "BUFFER" } => {
   throw new Error(`linearize expected BUFFER/VIEW base, got ${x.op}`);
 };
 
+const dimsOf = (node: UOp): number[] => {
+  if (isView(node)) return node.views[node.views.length - 1]?.dims ?? [];
+  if (node.op === "ADD" || node.op === "MUL") return dimsOf(node.srcs[0]);
+  if (node.op === "REDUCE") {
+    const src = dimsOf(node.srcs[0]);
+    return src.filter((_, i) => i !== node.axis);
+  }
+  return [];
+};
+
 const indexFromView = (view: View, ranges: UOp[]): UOp => {
   const n = view.dims.length;
   const use = ranges.slice(Math.max(0, ranges.length - n));
@@ -52,12 +62,37 @@ const linearizeStore = (graph: UOp & { op: "STORE" }): UOp[] => {
   if (src.op === "REDUCE" && src.bin === "ADD") {
     const reducedSrc = src.srcs[0];
     const outBase = isView(dst) ? resolveBuffer(dst.srcs[0]) : isBuffer(dst) ? dst : resolveBuffer(dst.srcs[0]!);
-    const outIdx = isView(dst)
-      ? indexFromView(dst.views[dst.views.length - 1], [])
-      : dst.op === "INDEX"
+
+    if (isView(dst)) {
+      const outView = dst.views[dst.views.length - 1];
+      const outerRanges = outView.dims.every((d) => d === 1) ? [] : outView.dims.map((d) => uop.range(d));
+      const outIdx = indexFromView(outView, outerRanges);
+      const redDims = dimsOf(reducedSrc);
+      const max = redDims[src.axis] ?? outBase.buf.size;
+      const reduceRange = uop.range(max);
+
+      const termLoops: UOp[] = [];
+      let oi = 0;
+      for (let i = 0; i < redDims.length; i++) {
+        if (i === src.axis) termLoops.push(reduceRange);
+        else termLoops.push(outerRanges[oi++] ?? uop.const(0));
+      }
+      const term = lowerExpr(reducedSrc, termLoops);
+
+      return [
+        ...outerRanges,
+        uop.store(uop.const(0), uop.index(outBase, outIdx)),
+        reduceRange,
+        uop.store(uop.add(uop.index(outBase, outIdx), term), uop.index(outBase, outIdx)),
+        uop.endrange(reduceRange),
+        ...outerRanges.slice().reverse().map((rr) => uop.endrange(rr as UOp & { op: "RANGE" }))
+      ];
+    }
+
+    const outIdx =
+      dst.op === "INDEX"
         ? lowerExpr(dst.srcs[1], [])
         : uop.const(0);
-
     const max = isView(reducedSrc) ? reducedSrc.views[reducedSrc.views.length - 1].dims[src.axis] : outBase.buf.size;
     const r = uop.range(max);
     const term = lowerExpr(reducedSrc, [r]);
