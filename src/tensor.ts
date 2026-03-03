@@ -1,7 +1,7 @@
 
 import { execAsync, type RuntimeName } from "./runtime/index.ts";
 import { graphUOP, type UOPGraphItem, type Shape, type UOP } from "./uops.ts";
-import { linear as nnLinear, matmul as nnMatmul } from "./nn.ts";
+import { linear as nnLinear } from "./nn.ts";
 
 export type Raw = number | Raw[];
 export type TensorOpts = { requiresGrad?: boolean };
@@ -9,8 +9,6 @@ export type TensorOpts = { requiresGrad?: boolean };
 type TensorCtx = {
   backward: (gradOut: Tensor) => void;
 };
-
-
 
 
 type TensorMethods = {
@@ -312,7 +310,45 @@ const mkTensor = (init: { uop: UOP; shape: Shape; requiresGrad?: boolean }): Ten
     }
   };
 
-  self.matmul = (other: Tensor) => nnMatmul(self, other);
+  self.matmul = (other) => {
+    if (self.shape.dims.length !== 2 || other.shape.dims.length !== 2) {
+      throw new Error("matmul expects 2D tensors");
+    }
+    const [m, k] = self.shape.dims;
+    const [k2, n] = other.shape.dims;
+    if (k !== k2) throw new Error(`matmul shape mismatch: [${m},${k}] x [${k2},${n}]`);
+
+    const mnk = m * n * k;
+    const out = mkTensor({
+      uop: {
+        op: "REDUCE",
+        bin: "ADD",
+        src: {
+          op: "MUL",
+          srcs: [self.uop, other.uop],
+          srcShapes: [
+            { dims: [m, k, n], strides: [k, 1, 0], numel: mnk },
+            { dims: [m, k, n], strides: [0, n, 1], numel: mnk }
+          ]
+        },
+        inShape: { dims: [m, k, n], strides: [k * n, n, 1], numel: mnk },
+        dims: [1]
+      },
+      shape: mkShape([m, n]),
+      requiresGrad: self.requiresGrad || other.requiresGrad
+    });
+
+    if (out.requiresGrad) {
+      out._parents = [self, other];
+      out._ctx = {
+        backward: (go) => {
+          if (self.requiresGrad) addGrad(self, go.matmul(other.permute([1, 0]).detach()));
+          if (other.requiresGrad) addGrad(other, self.permute([1, 0]).detach().matmul(go));
+        }
+      };
+    }
+    return out;
+  };
   self.graph = () => graphUOP(self.uop);
 
   return self;

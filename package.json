@@ -12,5 +12,12 @@
   "devDependencies": {
     "@types/bun": "^1.3.9",
     "@webgpu/types": "^0.1.69"
-  }
+  },
+  "dependencies": {
+    "bun-webgpu": "^0.1.5",
+    "webgpu": "^0.3.8"
+  },
+  "trustedDependencies": [
+    "webgpu"
+  ]
 }

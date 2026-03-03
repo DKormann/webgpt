@@ -1,13 +1,6 @@
-import type { Tensor as TensorType, BACKEND as BackendType } from "../tensor.ts";
+import type { ScriptCtx } from "../main.ts";
 
-type Ctx = {
-  Tensor: typeof TensorType;
-  BACKEND: typeof BackendType;
-  webgpuAvailable: boolean
-  
-};
-
-export const main = async ({ Tensor, BACKEND, webgpuAvailable }: Ctx) => {
+export const main = async ({ Tensor, BACKEND, webgpuAvailable }: ScriptCtx) => {
   BACKEND.default = webgpuAvailable ? "webgpu" : "js";
   const t = Tensor.new([[1, 2, 3], [4, 5, 6]]);
   return await t.run();
