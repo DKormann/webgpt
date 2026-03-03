@@ -19,8 +19,7 @@ export type UOp = {
   op: "STORE",
   srcs: [
     UOp, // source
-    UOp, // destination
-    UOp  // index
+    UOp // destination
   ]
 } | BUFFER | {
   op: "RANGE"

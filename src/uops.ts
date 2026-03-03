@@ -24,14 +24,12 @@ export const uop
   }),
 
 
-  store :  (src: UOp, dest: UOp, index:UOp) : UOp & {op:"STORE"} => ({
+  store :  (src: UOp, dest: UOp, index?:UOp) : UOp & {op:"STORE"} =>({
     op: "STORE",
     srcs: [
       src,
-      dest,
-      index
+      index == undefined ? dest : uop.index(dest, index ),
     ]
   }),
-  index: (src: UOp, index: UOp): UOp => ({op:"INDEX", srcs:[src,index]})
-
+  index: (buf: UOp, index: UOp): UOp => ({op:"INDEX", srcs:[buf,index]})
 }
