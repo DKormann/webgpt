@@ -63,19 +63,16 @@ export type UOp = {
   op: "RAND",
   srcs: [],
   seed: number,
-  size: number
+  size?: number
 } | {
   op: "VIEW",
   srcs: [UOp],
   views: View[]
-} | {
-  op: "MATMUL",
-  srcs: [UOp, UOp],
-  srcShapes: [TensorShape, TensorShape]
 }
+
 export type HighGraph = UOp & { op: "CONST" | "BUFFER" | BinOp | "REDUCE" | MoveOp }
 
-export type LowGraph = UOp & { op: "CONST" | "BUFFER" | BinOp | "REDUCE" | "RANGE" | "ENDRANGE" | "INDEX" | "STORE" } & {srcs: LowGraph[]}
+export type LowGraph = UOp & { op: "CONST" | "RAND" | "BUFFER" | BinOp | "REDUCE" | "RANGE" | "ENDRANGE" | "INDEX" | "STORE" } & {srcs: LowGraph[]}
 
 
 
@@ -91,6 +88,13 @@ export type ShapeTracker = {
   mask: [number, number][],
 }
 
+export type Schedule = {
+  items: {
+    Buffers: RAWBUFFER[]
+    roots: (UOp & {op:"STORE"})[]
+  }[]
+}
+
 export type RAWBUFFER = {size: number, read: ()=>Promise<number[]>}
 
 export type BACKEND <B extends RAWBUFFER> = {
@@ -104,11 +108,6 @@ export type Kernel = {
   launch: () => Promise<void>
 }
 
-export type Scheduler = {
-  kernels: Kernel[]
-  buffers: RAWBUFFER[]
-  launch: () => Promise<RAWBUFFER>
-}
 
 export type Tensor = {
   realized?: RAWBUFFER

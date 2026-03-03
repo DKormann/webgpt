@@ -24,7 +24,7 @@ export const uop
     srcs:[]
   }),
 
-  rand : (size:number, seed: number):UOp => ({op:"RAND", seed, srcs:[], size}),
+  rand : (seed: number, size?: number):UOp => ({op:"RAND", seed, srcs:[], size}),
 
   view: (src: UOp, views: View[]): UOp & { op: "VIEW" } => ({
     op: "VIEW",

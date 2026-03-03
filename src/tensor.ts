@@ -42,9 +42,9 @@ const binary = (self:Tensor, op: BinOp) => (other:Tensor) => {
   if (self.shape.numel !== other.shape.numel) throw new Error("mul expects same numel");
   return mkTensor({ op, srcs: [self.uop, other.uop] }, self.shape);
 };
-const mkTensor = (uop: UOp, shape: TensorShape): Tensor => {
+const mkTensor = (graph: UOp, shape: TensorShape): Tensor => {
   const self = {} as Tensor;
-  self.uop = uop;
+  self.uop = graph;
   self.shape = shape;
 
 
@@ -59,8 +59,15 @@ const mkTensor = (uop: UOp, shape: TensorShape): Tensor => {
     const [m, k] = self.shape.dims;
     const [k2, n] = other.shape.dims;
     if (k !== k2) throw new Error(`matmul shape mismatch: [${m},${k}] x [${k2},${n}]`);
+  
     return mkTensor(
-      { op: "MATMUL", srcs: [self.uop, other.uop], srcShapes: [self.shape, other.shape] },
+      uop.reduce(
+        uop.mul(
+          self.reshape([m,k,1]).expand([m,k,n]).uop,
+          self.reshape([1,k,n]).expand([m,k,n]).uop
+        ),
+        1, "ADD"
+      ),
       mkShape([m, n])
     );
   };
@@ -119,7 +126,14 @@ export const Tensor = {
   const: (value: number, dims: number[]): Tensor =>
     mkTensor({ op: "CONST", srcs: [], val: [value] }, mkShape(dims)),
 
-  new: (raw: Raw = 0): Tensor => mkTensor(uop.view(uop.const(...flattenRaw(raw)), [shapeFromRaw(raw)]), shapeFromRaw(raw))
+  new: (raw: Raw = 0): Tensor =>
+    mkTensor(
+      { op: "CONST", srcs: [], val: flattenRaw(raw) },
+      shapeFromRaw(raw)
+    ),
 
-  rand: (dims: number[]): Tensor => mkTensor({ op: "RAND", srcs: [], seed: (Math.random() * 0x7fffffff) | 0 }, mkShape(dims))
+  rand: (dims: number[]): Tensor => {
+    const shape = mkShape(dims);
+    return mkTensor({ op: "RAND", srcs: [], seed: (Math.random() * 0x7fffffff) | 0 }, shape);
+  }
 };

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Tensor } from "./tensor";
+import { uop } from "./uops";
 
 describe("tensor minimal api", () => {
   test("Tensor.const initializes scalar-filled tensor metadata", () => {
@@ -11,7 +12,12 @@ describe("tensor minimal api", () => {
 
   test("Tensor add graph", ()=>{
     const t = Tensor.const(2,[2,2])
-    expect(t.add(t))
+    expect(t.add(t).uop).toEqual(uop.add(t.uop,t.uop))
+  })
+
+  test("Tensor mul graph", ()=>{
+    const t = Tensor.const(2,[2,2])
+    expect(t.mul(t).uop).toEqual(uop.mul(t.uop,t.uop))
   })
 
   test("new(raw) infers shape", () => {

@@ -1,4 +1,5 @@
 import { BACKEND, Kernel, LowGraph, RAWBUFFER, UOp } from "./types";
+import { DEBUG } from "./debug";
 
 export type WEBGPUBUFFER = RAWBUFFER & {};
 
@@ -84,9 +85,19 @@ const codegenStore = (graph: UOp[], buffers: WEBGPUBUFFER[]): string => {
   const rangeVars = new Map<LowGraph, string>();
   const rangeStack: LowGraph[] = [];
   const lines: string[] = [];
+  const constScalar = (u: LowGraph & { op: "CONST" }): number => u.val[0] ?? 0;
+  const activeRandIndex = (): string => {
+    const active = rangeStack.map((r) => rangeVars.get(r)).filter((v): v is string => !!v);
+    if (active.length === 0) return "0u";
+    let expr = active[0];
+    for (let i = 1; i < active.length; i++) expr = `((${expr} * 1664525u) + ${active[i]} + 1013904223u)`;
+    return expr;
+  };
+  const containsRand = (u: UOp): boolean =>
+    u.op === "RAND" || u.srcs.some((s) => containsRand(s));
 
   const emitIndexExpr = (u: LowGraph): string => {
-    if (u.op === "CONST") return `${u.val}u`;
+    if (u.op === "CONST") return `${constScalar(u)}u`;
     if (u.op === "RANGE") {
       const v = rangeVars.get(u);
       if (!v) throw new Error("range used outside scope");
@@ -101,11 +112,18 @@ const codegenStore = (graph: UOp[], buffers: WEBGPUBUFFER[]): string => {
   };
 
   const emitValueExpr = (u: LowGraph): string => {
-    if (u.op === "CONST") return Number.isInteger(u.val) ? `${u.val}.0` : String(u.val);
+    if (u.op === "CONST") {
+      const v = constScalar(u);
+      return Number.isInteger(v) ? `${v}.0` : String(v);
+    }
     if (u.op === "RANGE") {
       const v = rangeVars.get(u);
       if (!v) throw new Error("range used outside scope");
       return `f32(${v})`;
+    }
+    if (u.op === "RAND") {
+      const seed = (Math.floor(u.seed) >>> 0);
+      return `randf(${seed}u ^ ${activeRandIndex()})`;
     }
     if (u.op === "ADD" || u.op === "MUL") {
       const a = emitValueExpr(u.srcs[0] as LowGraph);
@@ -150,9 +168,19 @@ const codegenStore = (graph: UOp[], buffers: WEBGPUBUFFER[]): string => {
     lines.push(`b${binding}[${emitIndexExpr(idx)}] = ${emitValueExpr(src)};`);
   }
   if (rangeStack.length) throw new Error("unclosed RANGE");
+  const needsRand = graph.some((g) => containsRand(g));
 
   return [
     ...buffers.map((_, i) => `@group(0) @binding(${i}) var<storage, read_write> b${i}: array<f32>;`),
+    ...(needsRand ? [
+      "fn randf(x:u32) -> f32 {",
+      "  var z = x + 0x9e3779b9u;",
+      "  z = (z ^ (z >> 16u)) * 0x85ebca6bu;",
+      "  z = (z ^ (z >> 13u)) * 0xc2b2ae35u;",
+      "  z = z ^ (z >> 16u);",
+      "  return f32(z) * 2.3283064365386963e-10;",
+      "}"
+    ] : []),
     "@compute @workgroup_size(1)",
     "fn main() {",
     ...lines.map((l) => `  ${l}`),
@@ -164,6 +192,7 @@ export const WEBGPU: BACKEND<WEBGPUBUFFER> = {
   createBuffer,
   createKernel: (graph: UOp[], buffers: WEBGPUBUFFER[]) => {
     const wgsl = codegenStore(graph, buffers);
+    if (DEBUG.get() === 1) console.log(wgsl);
 
     const launch = async () => {
       const device = await getDevice();
