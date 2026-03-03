@@ -10,7 +10,8 @@ describe("tensor minimal api", () => {
   });
 
   test("Tensor add graph", ()=>{
-    
+    const t = Tensor.const(2,[2,2])
+    expect(t.add(t))
   })
 
   test("new(raw) infers shape", () => {

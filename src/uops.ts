@@ -18,11 +18,13 @@ export const uop
   range : (max:number):UOp & {op:"RANGE"} => ({op:"RANGE", srcs:[], max}),
   endrange : (range: UOp & {op: "RANGE"}) : UOp & {op:"ENDRANGE"} => ({op:"ENDRANGE", srcs:[range]}),
 
-  const : (val: number): UOp & {op:"CONST"} => ({
+  const : (...val: number[]): UOp & {op:"CONST"} => ({
     op: "CONST",
     val,
     srcs:[]
   }),
+
+  rand : (size:number, seed: number):UOp => ({op:"RAND", seed, srcs:[], size}),
 
   view: (src: UOp, views: View[]): UOp & { op: "VIEW" } => ({
     op: "VIEW",

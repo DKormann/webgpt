@@ -58,12 +58,12 @@ export type UOp = {
 } | {
   op: "CONST",
   srcs: [],
-  val?: number,
-  data?: number[]
+  val: number[],
 } | {
   op: "RAND",
   srcs: [],
-  seed: number
+  seed: number,
+  size: number
 } | {
   op: "VIEW",
   srcs: [UOp],

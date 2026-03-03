@@ -1,4 +1,5 @@
-import { UOp, TensorShape } from "./types";
+import { UOp, TensorShape, BinOp } from "./types";
+import { uop } from "./uops";
 
 export type Raw = number | Raw[];
 export type RuntimeName = "js" | "webgpu";
@@ -7,6 +8,7 @@ export type Tensor = {
   uop: UOp;
   shape: TensorShape;
   mul: (other: Tensor) => Tensor;
+  add: (other: Tensor) => Tensor;
   matmul: (other: Tensor) => Tensor;
   reshape: (dims: number[]) => Tensor;
   permute: (axes: number[]) => Tensor;
@@ -36,15 +38,19 @@ const shapeFromRaw = (raw: Raw): TensorShape => {
   return mkShape(dims);
 };
 
+const binary = (self:Tensor, op: BinOp) => (other:Tensor) => {
+  if (self.shape.numel !== other.shape.numel) throw new Error("mul expects same numel");
+  return mkTensor({ op, srcs: [self.uop, other.uop] }, self.shape);
+};
 const mkTensor = (uop: UOp, shape: TensorShape): Tensor => {
   const self = {} as Tensor;
   self.uop = uop;
   self.shape = shape;
 
-  self.mul = (other) => {
-    if (self.shape.numel !== other.shape.numel) throw new Error("mul expects same numel");
-    return mkTensor({ op: "MUL", srcs: [self.uop, other.uop] }, self.shape);
-  };
+
+  self.add = binary(self, "ADD")
+  self.mul = binary(self, "MUL")
+
 
   self.matmul = (other) => {
     if (self.shape.dims.length !== 2 || other.shape.dims.length !== 2) {
@@ -111,10 +117,9 @@ const mkTensor = (uop: UOp, shape: TensorShape): Tensor => {
 
 export const Tensor = {
   const: (value: number, dims: number[]): Tensor =>
-    mkTensor({ op: "CONST", srcs: [], val: value }, mkShape(dims)),
+    mkTensor({ op: "CONST", srcs: [], val: [value] }, mkShape(dims)),
 
-  new: (raw: Raw = 0): Tensor =>
-    mkTensor({ op: "CONST", srcs: [], data: flattenRaw(raw), val: flattenRaw(raw)[0] ?? 0 }, shapeFromRaw(raw)),
+  new: (raw: Raw = 0): Tensor => mkTensor(uop.view(uop.const(...flattenRaw(raw)), [shapeFromRaw(raw)]), shapeFromRaw(raw))
 
   rand: (dims: number[]): Tensor => mkTensor({ op: "RAND", srcs: [], seed: (Math.random() * 0x7fffffff) | 0 }, mkShape(dims))
 };
