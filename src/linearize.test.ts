@@ -3,6 +3,7 @@ import {describe, expect, test} from "bun:test"
 import { WEBGPU } from "./webgpu"
 import { LowGraph, UOp } from "./types"
 import { uop } from "./uops"
+import { linearize } from "./linearize"
 
 
 describe("linearize ",()=>{
@@ -31,6 +32,12 @@ describe("linearize ",()=>{
         }
       ]
     }
+
+    expect(
+      linearize(g, [buffer])
+    ).toEqual(
+      
+    )
 
   })
 })
