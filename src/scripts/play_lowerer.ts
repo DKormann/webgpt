@@ -3,8 +3,11 @@ import {Tensor } from "../tensor"
 import {lowerer} from "../lowerer"
 import { kernelize } from "../kernelize"
 import { uop } from "../uops"
+import { linearize } from "../linearize"
+import { UOp } from "../types"
 
 
+let log = (x:UOp)=>console.log(uop.fmt(x))
 
 let t = Tensor.rand([2,2])
 let q = Tensor.rand([2,2])
@@ -21,4 +24,10 @@ console.log(uop.fmt(s))
 let l = lowerer(s)
 
 console.log(uop.fmt(l))
+
+
+let li = linearize(l)
+li.map(log)
+
+
 

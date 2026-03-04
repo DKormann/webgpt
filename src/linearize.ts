@@ -1,153 +1,105 @@
-import type { RAWBUFFER, UOp, View } from "./types";
+import type { UOp, UOpKind } from "./types";
 import { uop } from "./uops";
 
-const isView = (x: UOp): x is UOp & { op: "VIEW"; srcs: [UOp]; views: View[] } => x.op === "VIEW";
-const isBuffer = (x: UOp): x is UOp & { op: "BUFFER" } => x.op === "BUFFER";
+type Range = UOpKind<"RANGE">;
 
-const resolveBuffer = (x: UOp): UOp & { op: "BUFFER" } => {
-  if (isBuffer(x)) return x;
-  if (isView(x)) return resolveBuffer(x.srcs[0]);
-  throw new Error(`linearize expected BUFFER/VIEW base, got ${x.op}`);
+const uniqRanges = (arr: Range[]): Range[] => {
+  const seen = new Set<UOp>();
+  const out: Range[] = [];
+  for (const r of arr) {
+    if (!seen.has(r)) {
+      seen.add(r);
+      out.push(r);
+    }
+  }
+  return out;
 };
 
-const dimsOf = (node: UOp): number[] => {
-  if (isView(node)) return node.views[node.views.length - 1]?.dims ?? [];
-  if (node.op === "ADD" || node.op === "MUL") return dimsOf(node.srcs[0]);
-  if (node.op === "REDUCE_AXIS") {
-    const src = dimsOf(node.srcs[0]);
-    return src.filter((_, i) => i !== node.axis);
+const collectRanges = (node: UOp): Range[] => {
+  if (node.op === "RANGE") return [node];
+  if (node.op === "KERNEL") return collectRanges(node.srcs[0]);
+  if (node.op === "ADD" || node.op === "MUL" || node.op === "INDEX") {
+    return uniqRanges(node.srcs.flatMap((s) => collectRanges(s)) as Range[]);
   }
+  if (node.op === "REDUCE") return collectRanges(node.srcs[0]);
   return [];
 };
 
-const indexFromView = (view: View, ranges: UOp[]): UOp => {
-  const n = view.dims.length;
-  const use = ranges.slice(Math.max(0, ranges.length - n));
+const normalizeExpr = (node: UOp): UOp => {
+  if (node.op === "KERNEL") return normalizeExpr(node.srcs[0]);
+  if (node.op === "INDEX") {
+    const base = normalizeExpr(node.srcs[0]);
+    const idx = normalizeExpr(node.srcs[1]);
+    if (base.op === "KERNEL") return uop.index(normalizeExpr(base.srcs[0]), idx);
+    if (base.op === "INDEX") return uop.index(normalizeExpr(base.srcs[0]), idx);
+    return uop.index(base, idx);
+  }
+  if (node.op === "ADD" || node.op === "MUL") {
+    return { op: node.op, srcs: [normalizeExpr(node.srcs[0]), normalizeExpr(node.srcs[1])] };
+  }
+  if (node.op === "REDUCE") {
+    return { op: "REDUCE", bin: node.bin, keep: node.keep, srcs: [normalizeExpr(node.srcs[0])] };
+  }
+  return node;
+};
 
+const flattenRanges = (ranges: Range[]): UOp => {
+  if (ranges.length === 0) return uop.const(0);
   let idx: UOp = uop.const(0);
-  for (let i = 0; i < n; i++) {
-    const stride = view.strides[i] ?? 0;
-    const r = use[i] ?? uop.const(0);
-    const term = stride === 1 ? r : uop.mul(r, uop.const(stride));
+  for (let i = 0; i < ranges.length; i++) {
+    const stride = ranges.slice(i + 1).reduce((a, r) => a * r.max, 1);
+    const term = stride === 1 ? ranges[i] : uop.mul(ranges[i], uop.const(stride));
     idx = i === 0 ? term : uop.add(idx, term);
   }
   return idx;
 };
 
-const lowerExpr = (node: UOp, loops: UOp[]): UOp => {
-  if (isView(node)) {
-    const view = node.views[node.views.length - 1];
-    const src = node.srcs[0];
-    if (src.op === "RAND") return uop.index(src, indexFromView(view, loops));
-    const base = resolveBuffer(src);
-    return uop.index(base, indexFromView(view, loops));
-  }
-
-  if (node.op === "ADD" || node.op === "MUL") {
-    return {
-      op: node.op,
-      srcs: [lowerExpr(node.srcs[0], loops), lowerExpr(node.srcs[1], loops)]
-    } as UOp;
-  }
-
-  if (node.op === "INDEX") {
-    return uop.index(lowerExpr(node.srcs[0], loops), lowerExpr(node.srcs[1], loops));
-  }
-
-  return node;
+const asDstIndex = (dst: UOp, outputRanges: Range[]): UOp & { op: "INDEX" } => {
+  if (dst.op === "INDEX") return dst;
+  if (dst.op === "BUFFER") return uop.index(dst, flattenRanges(outputRanges)) as UOp & { op: "INDEX" };
+  throw new Error(`linearize unsupported store dst: ${dst.op}`);
 };
 
-const linearizeStore = (graph: UOp & { op: "STORE" }): UOp[] => {
-  const src = graph.srcs[0];
-  const dst = graph.srcs[1];
+const linearizeStore = (st: UOp & { op: "STORE" }): UOp[] => {
+  const src = st.srcs[0];
+  const dst = st.srcs[1];
 
-  if (src.op === "REDUCE_AXIS" && src.bin === "ADD") {
-    const reducedSrc = src.srcs[0];
-    const outBase = isView(dst) ? resolveBuffer(dst.srcs[0]) : isBuffer(dst) ? dst : resolveBuffer(dst.srcs[0]!);
+  if (src.op === "REDUCE") {
+    if (src.bin !== "ADD") throw new Error("linearize only supports REDUCE ADD");
 
-    if (isView(dst)) {
-      const outView = dst.views[dst.views.length - 1];
-      const outerRanges = outView.dims.every((d) => d === 1) ? [] : outView.dims.map((d) => uop.range(d));
-      const outIdx = indexFromView(outView, outerRanges);
-      const redDims = dimsOf(reducedSrc);
-      const max = redDims[src.axis] ?? outBase.buf.size;
-      const reduceRange = uop.range(max);
+    const outputRanges = uniqRanges(src.keep);
+    const redExpr = src.srcs[0];
+    const allRanges = collectRanges(redExpr);
+    const redRanges = allRanges.filter((r) => !outputRanges.includes(r));
 
-      const termLoops: UOp[] = [];
-      let oi = 0;
-      for (let i = 0; i < redDims.length; i++) {
-        if (i === src.axis) termLoops.push(reduceRange);
-        else termLoops.push(outerRanges[oi++] ?? uop.const(0));
-      }
-      const term = lowerExpr(reducedSrc, termLoops);
-
-      return [
-        ...outerRanges,
-        uop.store(uop.const(0), uop.index(outBase, outIdx)),
-        reduceRange,
-        uop.store(uop.add(uop.index(outBase, outIdx), term), uop.index(outBase, outIdx)),
-        uop.endrange(reduceRange),
-        ...outerRanges.slice().reverse().map((rr) => uop.endrange(rr as UOp & { op: "RANGE" }))
-      ];
-    }
-
-    const outIdx =
-      dst.op === "INDEX"
-        ? lowerExpr(dst.srcs[1], [])
-        : uop.const(0);
-    const max = isView(reducedSrc) ? reducedSrc.views[reducedSrc.views.length - 1].dims[src.axis] : outBase.buf.size;
-    const r = uop.range(max);
-    const term = lowerExpr(reducedSrc, [r]);
+    const d = asDstIndex(dst, outputRanges);
+    if (d.srcs[0].op !== "BUFFER") throw new Error("linearize reduce dst must index a BUFFER");
 
     return [
-      uop.store(uop.const(0), uop.index(outBase, outIdx)),
-      r,
-      uop.store(uop.add(uop.index(outBase, outIdx), term), uop.index(outBase, outIdx)),
-      uop.endrange(r)
+      ...outputRanges,
+      uop.store(uop.const(0), d),
+      ...redRanges,
+      uop.store(uop.add(uop.index(d.srcs[0], d.srcs[1]), redExpr), d),
+      ...redRanges.slice().reverse().map((r) => uop.endrange(r)),
+      ...outputRanges.slice().reverse().map((r) => uop.endrange(r)),
     ];
   }
 
-  if (isView(dst)) {
-    const view = dst.views[dst.views.length - 1];
-    const ranges = view.dims.map((d) => uop.range(d));
-    const base = resolveBuffer(dst.srcs[0]);
-    const store = uop.store(lowerExpr(src, ranges), uop.index(base, indexFromView(view, ranges)));
-    return [...ranges, store, ...ranges.slice().reverse().map((r) => uop.endrange(r as UOp & { op: "RANGE" }))];
-  }
-
-  if (isBuffer(dst)) {
-    return [uop.store(lowerExpr(src, []), uop.index(dst, uop.const(0)))];
-  }
-
-  if (dst.op === "INDEX") {
-    return [uop.store(lowerExpr(src, []), lowerExpr(dst, []))];
-  }
-
-  throw new Error(`linearize STORE destination unsupported: ${dst.op}`);
-};
-
-const linearizeReduce = (graph: UOp & { op: "REDUCE_AXIS" }, buffs?: RAWBUFFER[]): UOp[] => {
-  if (graph.bin !== "ADD") throw new Error(`linearize only supports ADD reduce for now`);
-
-  const src = graph.srcs[0];
-  const base = resolveBuffer(src);
-  const out = uop.buffer((buffs?.[0] ?? base.buf) as RAWBUFFER);
-  const zero = uop.const(0);
-
-  const max = isView(src) ? src.views[src.views.length - 1].dims[graph.axis] : out.buf.size;
-  const r = uop.range(max);
-  const rhs = lowerExpr(src, [r]);
-
+  const outputRanges = collectRanges(src);
+  const d = asDstIndex(dst, outputRanges);
   return [
-    uop.store(zero, uop.index(out, zero)),
-    r,
-    uop.store(uop.add(uop.index(out, zero), rhs), uop.index(out, zero)),
-    uop.endrange(r)
+    ...outputRanges,
+    uop.store(src, d),
+    ...outputRanges.slice().reverse().map((r) => uop.endrange(r)),
   ];
 };
 
-export const linearize = (graph: UOp, buffs?: RAWBUFFER[]): UOp[] => {
-  if (graph.op === "STORE") return linearizeStore(graph as UOp & { op: "STORE" });
-  if (graph.op === "REDUCE_AXIS") return linearizeReduce(graph as UOp & { op: "REDUCE_AXIS" }, buffs);
-  return [lowerExpr(graph, [])];
+export const linearize = (graph: UOp, outBuffer?: UOp & { op: "BUFFER" }): UOp[] => {
+  if (graph.op === "KERNEL") {
+    const src = normalizeExpr(graph.srcs[0]);
+    const out = outBuffer ?? uop.buffer({ size: graph.size, read: async () => [] });
+    return linearizeStore(uop.store(src, out));
+  }
+  if (graph.op === "STORE") return linearizeStore(graph);
+  return [normalizeExpr(graph)];
 };

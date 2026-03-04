@@ -1,7 +1,8 @@
-import type { BinOp, Schedule, UOp } from "./types";
+import type { BinOp, UOp } from "./types";
 import { uop } from "./uops";
 import { kernelize } from "./kernelize";
 import { linearize } from "./linearize";
+import { lowerer } from "./lowerer";
 import { WEBGPU } from "./webgpu";
 import { DEBUG } from "./debug";
 
@@ -146,30 +147,21 @@ const mkTensor = (graph: UOp, shape: number[]): Tensor => {
   self.shrink = (cuts) => shapeOp(self, "SHRINK", cuts.map(([a, b]) => b - a), { args: cuts });
 
   self.run = async (_backend?: RuntimeName) => {
-    const logSchedule = (x: Schedule, name = "") =>
-      x.items.forEach((it) => {
-        console.log(` ======= SCHEDULE ITEM: ${name} ======= `);
-        it.roots.forEach((u) => console.log(uop.fmt(u)));
-      });
-
     const backend = _backend ?? BACKEND.default;
     if (backend !== "webgpu") throw new Error(`backend ${backend} not implemented`);
-    const sched = kernelize(self, WEBGPU.createBuffer);
+    const kg = kernelize(self.uop);
+    const lg = lowerer(kg);
+    if (lg.op !== "KERNEL") throw new Error("expected KERNEL root after kernelize/lowerer");
 
-    if (DEBUG.get()) logSchedule(sched);
+    const outBuffer = WEBGPU.createBuffer(lg.size);
+    const low = linearize(lg, uop.buffer(outBuffer));
+    if (DEBUG.get()) console.log(low.map((x) => uop.fmt(x)).join("\n"));
 
-    let out: number[] = [];
-    for (const item of sched.items) {
-      for (const root of item.roots) {
-        const low = linearize(root);
-        const used = buffersIn(low);
-        const bufs = item.Buffers.filter((b) => Array.from(used).some((u) => u.buf === b));
-        const k = WEBGPU.createKernel(low, bufs as Parameters<typeof WEBGPU.createKernel>[1]);
-        await k.launch();
-      }
-      out = await item.Buffers[0].read();
-    }
-    return out;
+    const used = buffersIn(low);
+    const bufs = Array.from(used).map((u) => u.buf);
+    const k = WEBGPU.createKernel(low, bufs as Parameters<typeof WEBGPU.createKernel>[1]);
+    await k.launch();
+    return outBuffer.read();
   };
 
   return self;
