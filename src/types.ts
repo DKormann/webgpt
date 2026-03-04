@@ -23,6 +23,9 @@ export type TensorShape = {
   mask?: [number, number][];
 }
 
+export type UOpKind <OP> = UOp & {op: OP}
+
+
 export type UOp = {
   op: "STORE",
   srcs: [
@@ -48,7 +51,7 @@ export type UOp = {
   op: "REDUCE",
   bin: BinOp,
   srcs: [UOp],
-  keep: number[]
+  keep: UOpKind<"RANGE">[]
 } | {
   op: BinOp
   srcs: [UOp, UOp]
@@ -76,6 +79,10 @@ export type UOp = {
 } | {
   op: "DEFINE_REG"
   srcs:[]
+} | {
+  op: "KERNEL",
+  size:number,
+  srcs: [UOp],
 }
 
 export type HighGraph = UOp & { op: "CONST" | "BUFFER" | BinOp | "REDUCE_AXIS" | MoveOp }

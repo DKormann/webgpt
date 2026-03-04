@@ -1,26 +1,30 @@
-import { Tensor } from "./tensor";
-import type { RAWBUFFER, Schedule, UOp } from "./types";
+import { PatternMatcher, UPat } from "./patter_matcher";
+import type { UOp, UOpKind } from "./types";
 import { uop } from "./uops";
 
 
-export const kernelize = (t:Tensor, alloc: (size:number)=>RAWBUFFER):Schedule => {
 
-  let root = t.uop
+export const findSize = (g:UOp):number=>{
+  if ("size" in g) return g.size as number
+  if (g.srcs.length == 0) throw new Error("cannot find size" + uop.fmt(g))
+  return findSize(g.srcs[0])
+}
 
-  let sinkbuff = alloc(t.shape.dims.reduce((a,b)=>a*b,1))
-  let store = uop.store(root, uop.buffer(sinkbuff))
 
-  let buffs = new Set<RAWBUFFER>([sinkbuff])
-  let getbuffs = (graph:UOp)=>{
-    if (graph.op == "BUFFER") buffs.add(graph.buf)
-    graph.srcs.forEach(getbuffs)
-  }
-  getbuffs(root)
-  return {
-    "items":[{
-      Buffers:Array.from(buffs),
-      roots: [store]
-    }]
-  }
+export const mkKernel = (g:UOp):UOp =>( {op:"KERNEL", size:findSize(g), srcs: [g]})
+
+
+let pm = new PatternMatcher([
+  [new UPat("v1", "VIEW", [new UPat("v2", "VIEW")]), ({v1,v2})=>(uop.view(v2.srcs[0]!, ([v1,v2] as UOpKind<"VIEW">[]).map(v=>v.views).flat()))],
+  [new UPat("x", "VIEW", [new UPat()]), ({x})=>{
+    if (x.srcs[0]?.op == "KERNEL") return null
+    return {...x,srcs:[mkKernel(x.srcs[0]!)]} as UOp
+  }],
+])
+
+export const kernelize = (u:UOp):UOp => {
+
+  return mkKernel(pm.match(u))
+
 }
 

@@ -1,11 +1,9 @@
-import type { UOp, TensorShape, BinOp, Schedule, Shape } from "./types";
+import type { BinOp, Schedule, UOp } from "./types";
 import { uop } from "./uops";
 import { kernelize } from "./kernelize";
-// import { lower } from "./lower";
 import { linearize } from "./linearize";
 import { WEBGPU } from "./webgpu";
 import { DEBUG } from "./debug";
-import { log } from "./helpers";
 
 export type Raw = number | Raw[];
 export type RuntimeName = "js" | "webgpu";
@@ -13,7 +11,7 @@ export type RuntimeName = "js" | "webgpu";
 export type Tensor = {
   uop: UOp;
   shape: number[];
-  numel: ()=>number;
+  numel: () => number;
   mul: (other: Tensor) => Tensor;
   add: (other: Tensor) => Tensor;
   sum: (dims?: number[]) => Tensor;
@@ -26,29 +24,22 @@ export type Tensor = {
   run: (_backend?: RuntimeName) => Promise<Raw>;
 };
 
-export const BACKEND: { default: RuntimeName } = {default:"webgpu"};
+export const BACKEND: { default: RuntimeName } = { default: "webgpu" };
 
-const mkContiguousShape = (dims: number[]): TensorShape => ({
-  dims,
-  strides: dims.map((_, i) => dims.slice(i + 1).reduce((a, c) => a * c, 1)),
-  numel: dims.reduce((a, c) => a * c, 1)
-});
+const numel = (shape: number[]): number => shape.reduce((a, b) => a * b, 1);
+const stridesFor = (shape: number[]): number[] =>
+  shape.map((_, i) => shape.slice(i + 1).reduce((a, c) => a * c, 1));
 
 const flattenRaw = (raw: Raw): number[] => ([raw] as number[]).flat(Infinity) as number[];
 
-const shapeFromRaw = (raw: Raw): TensorShape => {
+const shapeFromRaw = (raw: Raw): number[] => {
   const dims: number[] = [];
   let cur: Raw = raw;
   while (Array.isArray(cur)) {
     dims.push(cur.length);
     cur = cur[0] as Raw;
   }
-  return mkContiguousShape(dims);
-};
-
-const binary = (self:Tensor, op: BinOp) => (other:Tensor) => {
-  if (JSON.stringify(self.shape) != JSON.stringify(other.shape)) throw new Error("shape mismatch");
-  return mkTensor({ op, srcs: [self.uop, other.uop] }, self.shape);
+  return dims;
 };
 
 const normalizeAxes = (axes: number[] | undefined, rank: number): number[] => {
@@ -70,120 +61,102 @@ const buffersIn = (graph: UOp[]): Set<UOp & { op: "BUFFER" }> => {
   return out;
 };
 
+const binary = (self: Tensor, op: BinOp) => (other: Tensor) => {
+  if (JSON.stringify(self.shape) !== JSON.stringify(other.shape)) throw new Error("shape mismatch");
+  return mkTensor({ op, srcs: [self.uop, other.uop] }, self.shape.slice());
+};
 
+const reduce = (self: Tensor, op: BinOp, axes?: number[]): Tensor => {
+  if (axes === undefined) {
+    return mkTensor(uop.reduce(uop.view(self.uop, [{ dims: [self.numel()], strides: [1] }]), [0], op), []);
+  }
 
-let reduce = (self:Tensor, op:BinOp, axes?: number[])=>{
+  const norm = normalizeAxes(axes, self.shape.length);
+  if (norm.length === 0) return self;
 
-  if (axes==undefined) axes = self.shape.map((_, i) => i)
+  let g = self.uop;
+  let outShape = self.shape.slice();
+  for (const axis of norm) {
+    g = uop.reduce(g, [axis], op);
+    outShape = outShape.filter((_, i) => i !== axis);
+  }
+  return mkTensor(g, outShape);
+};
 
-  return mkTensor(
-    uop.reduce(
-      self.uop,
-      axes,
-      op
-    ),
-    self.shape.filter((x,i)=>!axes.includes(i))
-  )
-}
-
+const shapeOp = (
+  self: Tensor,
+  op: "RESHAPE" | "EXPAND" | "PERMUTE" | "PAD" | "SHRINK",
+  outShape: number[],
+  payload: { shape?: number[]; args?: [number, number][] }
+): Tensor => {
+  if (op === "PAD" || op === "SHRINK") return mkTensor({ op, srcs: [self.uop], args: payload.args! }, outShape);
+  return mkTensor({ op, srcs: [self.uop], shape: payload.shape! }, outShape);
+};
 
 const mkTensor = (graph: UOp, shape: number[]): Tensor => {
   const self = {} as Tensor;
   self.uop = graph;
   self.shape = shape;
+  self.numel = () => numel(self.shape);
 
-
-  self.add = binary(self, "ADD")
-  self.mul = binary(self, "MUL")
-  self.sum = (axes?) => reduce(self, "ADD", axes)
-  // self.prod = (axes?) => reduce(self, "MUL", axes)
-
+  self.add = binary(self, "ADD");
+  self.mul = binary(self, "MUL");
+  self.sum = (axes?) => reduce(self, "ADD", axes);
 
   self.matmul = (other) => {
-    if (self.shape.dims.length !== 2 || other.shape.dims.length !== 2) {
-      throw new Error("matmul expects 2D tensors");
-    }
-    const [m, k] = self.shape.dims;
-    const [k2, n] = other.shape.dims;
+    if (self.shape.length !== 2 || other.shape.length !== 2) throw new Error("matmul expects 2D tensors");
+    const [m, k] = self.shape;
+    const [k2, n] = other.shape;
     if (k !== k2) throw new Error(`matmul shape mismatch: [${m},${k}] x [${k2},${n}]`);
-  
+
     return mkTensor(
       uop.reduce(
         uop.mul(
           uop.view(self.uop, [{ dims: [m, k, n], strides: [k, 1, 0] }]),
           uop.view(other.uop, [{ dims: [m, k, n], strides: [0, n, 1] }])
         ),
-        1, "ADD"
+        [1],
+        "ADD"
       ),
-      mkContiguousShape([m, n])
+      [m, n]
     );
   };
 
-  self.reshape = (dims) => mkTensor(self.uop, mkContiguousShape(dims));
+  self.reshape = (dims) => {
+    if (numel(dims) !== self.numel()) throw new Error("reshape numel mismatch");
+    return shapeOp(self, "RESHAPE", dims.slice(), { shape: dims.slice() });
+  };
 
-  self.permute = (axes) =>
-    mkTensor(self.uop, {
-      dims: axes.map((a) => self.shape.dims[a]),
-      strides: axes.map((a) => self.shape.strides[a]),
-      numel: self.shape.numel,
-      offset: self.shape.offset,
-      mask: self.shape.mask ? axes.map((a) => self.shape.mask![a]) : undefined
-    });
+  self.permute = (axes) => {
+    if (axes.length !== self.shape.length) throw new Error("permute axes rank mismatch");
+    const out = axes.map((a) => self.shape[a]);
+    return shapeOp(self, "PERMUTE", out, { shape: axes.slice() });
+  };
 
-  self.expand = (dims) =>
-    mkTensor(self.uop, {
-      dims,
-      strides: dims.map((d, i) => {
-        const sd = self.shape.dims[i] ?? 1;
-        const ss = self.shape.strides[i] ?? 0;
-        if (sd === d) return ss;
-        if (sd === 1 && d >= 1) return 0;
-        throw new Error("bad expand");
-      }),
-      numel: dims.reduce((a, c) => a * c, 1),
-      offset: self.shape.offset,
-      mask: self.shape.mask
-    });
+  self.expand = (dims) => shapeOp(self, "EXPAND", dims.slice(), { shape: dims.slice() });
 
   self.pad = (pads) =>
-    mkTensor(self.uop, {
-      dims: self.shape.dims.map((d, i) => pads[i][0] + d + pads[i][1]),
-      strides: self.shape.strides,
-      numel: self.shape.dims.map((d, i) => pads[i][0] + d + pads[i][1]).reduce((a, c) => a * c, 1),
-      offset: (self.shape.offset ?? 0) - pads.reduce((a, p, i) => a + p[0] * self.shape.strides[i], 0),
-      mask: self.shape.dims.map((d, i) => [pads[i][0], pads[i][0] + d])
-    });
+    shapeOp(
+      self,
+      "PAD",
+      self.shape.map((d, i) => pads[i][0] + d + pads[i][1]),
+      { args: pads }
+    );
 
-  self.shrink = (cuts) =>
-    mkTensor(self.uop, {
-      dims: cuts.map((c) => c[1] - c[0]),
-      strides: self.shape.strides,
-      numel: cuts.map((c) => c[1] - c[0]).reduce((a, c) => a * c, 1),
-      offset: (self.shape.offset ?? 0) + cuts.reduce((a, c, i) => a + c[0] * self.shape.strides[i], 0)
-    });
+  self.shrink = (cuts) => shapeOp(self, "SHRINK", cuts.map(([a, b]) => b - a), { args: cuts });
 
   self.run = async (_backend?: RuntimeName) => {
-
-
-    const logSchedule = (x:Schedule, name ="")=> x.items.forEach(x=>{
-      console.log(` ======= SCHEDULE ITEM: ${name} ======= `)
-      x.roots.forEach(u=>console.log(uop.fmt(u)))
-    })
+    const logSchedule = (x: Schedule, name = "") =>
+      x.items.forEach((it) => {
+        console.log(` ======= SCHEDULE ITEM: ${name} ======= `);
+        it.roots.forEach((u) => console.log(uop.fmt(u)));
+      });
 
     const backend = _backend ?? BACKEND.default;
     if (backend !== "webgpu") throw new Error(`backend ${backend} not implemented`);
     const sched = kernelize(self, WEBGPU.createBuffer);
 
-    if(DEBUG.get()) logSchedule(sched)
-
-    // const lowSched = lower(sched, (size, data) => {
-    //   const b = WEBGPU.createBuffer(size) as typeof WEBGPU extends { createBuffer: (...args: any[]) => infer T } ? T : never;
-    //   if (data) (b as { __initData?: number[] }).__initData = data.slice();
-    //   return b;
-    // });
-
-    // if(DEBUG.get()) logSchedule(lowSched, "lower")
-
+    if (DEBUG.get()) logSchedule(sched);
 
     let out: number[] = [];
     for (const item of sched.items) {
@@ -203,27 +176,17 @@ const mkTensor = (graph: UOp, shape: number[]): Tensor => {
 };
 
 export const Tensor = {
-  const: (value: number, dims: number[]): Tensor => {
-    let shape = {
-      dims,
-      strides: dims.map(x=>0)
-    }  as TensorShape;
-    return mkTensor(
-      uop.view({ op: "CONST", srcs: [], val: [value] }, [shape]),
-      shape
-    );
-  },
+  const: (value: number, dims: number[]): Tensor =>
+    mkTensor(uop.view({ op: "CONST", srcs: [], val: [value] }, [{ dims, strides: stridesFor(dims) }]), dims.slice()),
 
   new: (raw: Raw = 0): Tensor => {
-    const shape = shapeFromRaw(raw);
+    const dims = shapeFromRaw(raw);
     return mkTensor(
-      uop.view({ op: "CONST", srcs: [], val: flattenRaw(raw) }, [{ dims: shape.dims, strides: shape.strides }]),
-      shape
+      uop.view({ op: "CONST", srcs: [], val: flattenRaw(raw) }, [{ dims, strides: stridesFor(dims) }]),
+      dims
     );
   },
 
-  rand: (dims: number[]): Tensor => {
-    const shape = mkContiguousShape(dims);
-    return mkTensor({ op: "RAND", srcs: [], seed: (Math.random() * 0x7fffffff) | 0, size: shape.numel }, shape);
-  }
+  rand: (dims: number[]): Tensor =>
+    mkTensor({ op: "RAND", srcs: [], seed: (Math.random() * 0x7fffffff) | 0, size: numel(dims) }, dims.slice()),
 };
