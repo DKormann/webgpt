@@ -1,4 +1,4 @@
-import { BACKEND, Kernel, LowGraph, RAWBUFFER, UOp } from "./types";
+import type { BACKEND, Kernel, LowGraph, RAWBUFFER, UOp } from "./types";
 import { DEBUG } from "./debug";
 
 export type WEBGPUBUFFER = RAWBUFFER & {};
@@ -16,7 +16,8 @@ const getGPU = async (): Promise<GPU> => {
     const g = (globalThis as { navigator?: Navigator }).navigator?.gpu;
     if (g) return g;
 
-    const m = await import("bun-webgpu");
+    const dynamicImport = new Function("m", "return import(m)") as (m: string) => Promise<{ setupGlobals: () => void }>;
+    const m = await dynamicImport("bun-webgpu");
     m.setupGlobals();
     const gg = (globalThis as { navigator?: Navigator }).navigator?.gpu;
     if (!gg) throw new Error("bun-webgpu did not expose navigator.gpu");
@@ -46,6 +47,10 @@ const ensureGPUBuffer = async (buffer: WEBGPUBUFFER): Promise<GPUBuffer> => {
     size: Math.max(4, st.size * 4),
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
   });
+  const initData = (buffer as WEBGPUBUFFER & { __initData?: number[] }).__initData;
+  if (initData && initData.length) {
+    device.queue.writeBuffer(st.gpu, 0, new Float32Array(initData));
+  }
   return st.gpu;
 };
 
@@ -86,13 +91,6 @@ const codegenStore = (graph: UOp[], buffers: WEBGPUBUFFER[]): string => {
   const rangeStack: LowGraph[] = [];
   const lines: string[] = [];
   const constScalar = (u: LowGraph & { op: "CONST" }): number => u.val[0] ?? 0;
-  const activeRandIndex = (): string => {
-    const active = rangeStack.map((r) => rangeVars.get(r)).filter((v): v is string => !!v);
-    if (active.length === 0) return "0u";
-    let expr = active[0];
-    for (let i = 1; i < active.length; i++) expr = `((${expr} * 1664525u) + ${active[i]} + 1013904223u)`;
-    return expr;
-  };
   const containsRand = (u: UOp): boolean =>
     u.op === "RAND" || u.srcs.some((s) => containsRand(s));
 
@@ -121,10 +119,6 @@ const codegenStore = (graph: UOp[], buffers: WEBGPUBUFFER[]): string => {
       if (!v) throw new Error("range used outside scope");
       return `f32(${v})`;
     }
-    if (u.op === "RAND") {
-      const seed = (Math.floor(u.seed) >>> 0);
-      return `randf(${seed}u ^ ${activeRandIndex()})`;
-    }
     if (u.op === "ADD" || u.op === "MUL") {
       const a = emitValueExpr(u.srcs[0] as LowGraph);
       const b = emitValueExpr(u.srcs[1] as LowGraph);
@@ -133,6 +127,10 @@ const codegenStore = (graph: UOp[], buffers: WEBGPUBUFFER[]): string => {
     if (u.op === "INDEX") {
       const base = u.srcs[0] as LowGraph;
       const idx = u.srcs[1] as LowGraph;
+      if (base.op === "RAND") {
+        const seed = (Math.floor(base.seed) >>> 0);
+        return `randf(${seed}u ^ ${emitIndexExpr(idx)})`;
+      }
       if (base.op !== "BUFFER") throw new Error(`unsupported value index base: ${base.op}`);
       const binding = buffers.findIndex((b) => b === (base.buf as WEBGPUBUFFER));
       if (binding < 0) throw new Error("graph references unknown kernel buffer");

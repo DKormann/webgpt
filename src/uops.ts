@@ -1,4 +1,4 @@
-import { BinOp, RAWBUFFER, UOp, View } from "./types";
+import type { BinOp, RAWBUFFER, UOp, View } from "./types";
 
 
 export const uop
@@ -32,8 +32,8 @@ export const uop
     views
   }),
 
-  reduce: (src: UOp, axis: number, bin: BinOp): UOp & { op: "REDUCE" } => ({
-    op: "REDUCE",
+  reduce: (src: UOp, axis: number[], bin: BinOp): UOp & { op: "REDUCE_AXIS" } => ({
+    op: "REDUCE_AXIS",
     srcs: [src],
     axis,
     bin
@@ -47,5 +47,16 @@ export const uop
       index ? uop.index(dest, index) : dest
     ]
   }),
-  index: (buf: UOp, index: UOp): UOp => ({op:"INDEX", srcs:[buf,index]})
+  index: (buf: UOp, index: UOp): UOp => ({op:"INDEX", srcs:[buf,index]}),
+
+  fmt: (u:UOp) : string => {
+    let head = u.op
+    Object.entries(u).forEach(([k,v])=>{if (!["srcs", "op", "seed"].includes(k)) head += ` ${k} : ${JSON.stringify(v)}`})
+
+    if (u.srcs.length > 0) head += ('\n' + u.srcs.map(x=>uop.fmt(x)).join("\n")).replace(/\n/g,"\n  ")
+    return head
+  }
+
+
 }
+

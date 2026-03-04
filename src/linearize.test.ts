@@ -72,19 +72,19 @@ describe("linearize",()=>{
 
     const low = linearize(high)
 
-    const r0 = uop.range(2)
-    const r1 = uop.range(2)
-    const rk = uop.range(3)
+    const range0 = uop.range(2)
+    const range1 = uop.range(2)
+    const range2 = uop.range(3)
 
-    const outIdx = uop.add(uop.mul(r0, uop.const(2)), r1)
-    const aIdx = uop.add(uop.add(uop.mul(r0, uop.const(3)), rk), uop.mul(r1, uop.const(0)))
-    const bIdx = uop.add(uop.add(uop.mul(r0, uop.const(0)), uop.mul(rk, uop.const(2))), r1)
+    const outIdx = uop.add(uop.mul(range0, uop.const(2)), range1)
+    const aIdx = uop.add(uop.add(uop.mul(range0, uop.const(3)), range2), uop.mul(range1, uop.const(0)))
+    const bIdx = uop.add(uop.add(uop.mul(range0, uop.const(0)), uop.mul(range2, uop.const(2))), range1)
 
     const expected: UOp[] = [
-      r0,
-      r1,
+      range0,
+      range1,
       uop.store(uop.const(0), uop.index(uop.buffer(out), outIdx)),
-      rk,
+      range2,
       uop.store(
         uop.add(
           uop.index(uop.buffer(out), outIdx),
@@ -95,9 +95,9 @@ describe("linearize",()=>{
         ),
         uop.index(uop.buffer(out), outIdx)
       ),
-      uop.endrange(rk),
-      uop.endrange(r1),
-      uop.endrange(r0),
+      uop.endrange(range2),
+      uop.endrange(range1),
+      uop.endrange(range0),
     ]
 
     expect(low).toEqual(expected)

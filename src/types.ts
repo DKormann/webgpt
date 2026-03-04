@@ -40,10 +40,15 @@ export type UOp = {
   op: "INDEX",
   srcs: [UOp, UOp]
 } | {
+  op: "REDUCE_AXIS",
+  bin: BinOp,
+  srcs: [UOp],
+  axis: number[]
+} | {
   op: "REDUCE",
   bin: BinOp,
   srcs: [UOp],
-  axis: number
+  keep: number[]
 } | {
   op: BinOp
   srcs: [UOp, UOp]
@@ -68,11 +73,14 @@ export type UOp = {
   op: "VIEW",
   srcs: [UOp],
   views: View[]
+} | {
+  op: "DEFINE_REG"
+  srcs:[]
 }
 
-export type HighGraph = UOp & { op: "CONST" | "BUFFER" | BinOp | "REDUCE" | MoveOp }
+export type HighGraph = UOp & { op: "CONST" | "BUFFER" | BinOp | "REDUCE_AXIS" | MoveOp }
 
-export type LowGraph = UOp & { op: "CONST" | "RAND" | "BUFFER" | BinOp | "REDUCE" | "RANGE" | "ENDRANGE" | "INDEX" | "STORE" } & {srcs: LowGraph[]}
+export type LowGraph = UOp & { op: "CONST" | "RAND" | "BUFFER" | BinOp | "REDUCE_AXIS" | "RANGE" | "ENDRANGE" | "INDEX" | "STORE" | "DEFINE_REG" } & {srcs: LowGraph[]}
 
 
 

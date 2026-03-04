@@ -1,4 +1,4 @@
-import { RAWBUFFER, UOp, View } from "./types";
+import type { RAWBUFFER, UOp, View } from "./types";
 import { uop } from "./uops";
 
 const isView = (x: UOp): x is UOp & { op: "VIEW"; srcs: [UOp]; views: View[] } => x.op === "VIEW";
@@ -13,7 +13,7 @@ const resolveBuffer = (x: UOp): UOp & { op: "BUFFER" } => {
 const dimsOf = (node: UOp): number[] => {
   if (isView(node)) return node.views[node.views.length - 1]?.dims ?? [];
   if (node.op === "ADD" || node.op === "MUL") return dimsOf(node.srcs[0]);
-  if (node.op === "REDUCE") {
+  if (node.op === "REDUCE_AXIS") {
     const src = dimsOf(node.srcs[0]);
     return src.filter((_, i) => i !== node.axis);
   }
@@ -37,7 +37,9 @@ const indexFromView = (view: View, ranges: UOp[]): UOp => {
 const lowerExpr = (node: UOp, loops: UOp[]): UOp => {
   if (isView(node)) {
     const view = node.views[node.views.length - 1];
-    const base = resolveBuffer(node.srcs[0]);
+    const src = node.srcs[0];
+    if (src.op === "RAND") return uop.index(src, indexFromView(view, loops));
+    const base = resolveBuffer(src);
     return uop.index(base, indexFromView(view, loops));
   }
 
@@ -59,7 +61,7 @@ const linearizeStore = (graph: UOp & { op: "STORE" }): UOp[] => {
   const src = graph.srcs[0];
   const dst = graph.srcs[1];
 
-  if (src.op === "REDUCE" && src.bin === "ADD") {
+  if (src.op === "REDUCE_AXIS" && src.bin === "ADD") {
     const reducedSrc = src.srcs[0];
     const outBase = isView(dst) ? resolveBuffer(dst.srcs[0]) : isBuffer(dst) ? dst : resolveBuffer(dst.srcs[0]!);
 
@@ -124,7 +126,7 @@ const linearizeStore = (graph: UOp & { op: "STORE" }): UOp[] => {
   throw new Error(`linearize STORE destination unsupported: ${dst.op}`);
 };
 
-const linearizeReduce = (graph: UOp & { op: "REDUCE" }, buffs?: RAWBUFFER[]): UOp[] => {
+const linearizeReduce = (graph: UOp & { op: "REDUCE_AXIS" }, buffs?: RAWBUFFER[]): UOp[] => {
   if (graph.bin !== "ADD") throw new Error(`linearize only supports ADD reduce for now`);
 
   const src = graph.srcs[0];
@@ -146,6 +148,6 @@ const linearizeReduce = (graph: UOp & { op: "REDUCE" }, buffs?: RAWBUFFER[]): UO
 
 export const linearize = (graph: UOp, buffs?: RAWBUFFER[]): UOp[] => {
   if (graph.op === "STORE") return linearizeStore(graph as UOp & { op: "STORE" });
-  if (graph.op === "REDUCE") return linearizeReduce(graph as UOp & { op: "REDUCE" }, buffs);
+  if (graph.op === "REDUCE_AXIS") return linearizeReduce(graph as UOp & { op: "REDUCE_AXIS" }, buffs);
   return [lowerExpr(graph, [])];
 };

@@ -86,7 +86,7 @@ describe("low level webgpu test",()=>{
 
     const kernel = Device.createKernel([
       range,
-      uop.store({ op: "RAND", srcs: [], seed }, uop.index(buf, range)),
+      uop.store(uop.index({ op: "RAND", srcs: [], seed }, range), uop.index(buf, range)),
       uop.endrange(range),
     ], [buffer])
 

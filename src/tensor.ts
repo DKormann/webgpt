@@ -1,14 +1,22 @@
-import { UOp, TensorShape, BinOp } from "./types";
+import type { UOp, TensorShape, BinOp, Schedule, Shape } from "./types";
 import { uop } from "./uops";
+import { kernelize } from "./kernelize";
+// import { lower } from "./lower";
+import { linearize } from "./linearize";
+import { WEBGPU } from "./webgpu";
+import { DEBUG } from "./debug";
+import { log } from "./helpers";
 
 export type Raw = number | Raw[];
 export type RuntimeName = "js" | "webgpu";
 
 export type Tensor = {
   uop: UOp;
-  shape: TensorShape;
+  shape: number[];
+  numel: ()=>number;
   mul: (other: Tensor) => Tensor;
   add: (other: Tensor) => Tensor;
+  sum: (dims?: number[]) => Tensor;
   matmul: (other: Tensor) => Tensor;
   reshape: (dims: number[]) => Tensor;
   permute: (axes: number[]) => Tensor;
@@ -18,9 +26,9 @@ export type Tensor = {
   run: (_backend?: RuntimeName) => Promise<Raw>;
 };
 
-export const BACKEND: { default?: RuntimeName } = {};
+export const BACKEND: { default: RuntimeName } = {default:"webgpu"};
 
-const mkShape = (dims: number[]): TensorShape => ({
+const mkContiguousShape = (dims: number[]): TensorShape => ({
   dims,
   strides: dims.map((_, i) => dims.slice(i + 1).reduce((a, c) => a * c, 1)),
   numel: dims.reduce((a, c) => a * c, 1)
@@ -35,14 +43,51 @@ const shapeFromRaw = (raw: Raw): TensorShape => {
     dims.push(cur.length);
     cur = cur[0] as Raw;
   }
-  return mkShape(dims);
+  return mkContiguousShape(dims);
 };
 
 const binary = (self:Tensor, op: BinOp) => (other:Tensor) => {
-  if (self.shape.numel !== other.shape.numel) throw new Error("mul expects same numel");
+  if (JSON.stringify(self.shape) != JSON.stringify(other.shape)) throw new Error("shape mismatch");
   return mkTensor({ op, srcs: [self.uop, other.uop] }, self.shape);
 };
-const mkTensor = (graph: UOp, shape: TensorShape): Tensor => {
+
+const normalizeAxes = (axes: number[] | undefined, rank: number): number[] => {
+  const raw = axes ?? [...Array(rank).keys()];
+  const norm = raw.map((a) => (a < 0 ? rank + a : a));
+  for (const a of norm) {
+    if (a < 0 || a >= rank) throw new Error(`sum axis out of range: ${a} for rank ${rank}`);
+  }
+  return [...new Set(norm)].sort((a, b) => b - a);
+};
+
+const buffersIn = (graph: UOp[]): Set<UOp & { op: "BUFFER" }> => {
+  const out = new Set<UOp & { op: "BUFFER" }>();
+  const walk = (u: UOp) => {
+    if (u.op === "BUFFER") out.add(u);
+    u.srcs.forEach(walk);
+  };
+  graph.forEach(walk);
+  return out;
+};
+
+
+
+let reduce = (self:Tensor, op:BinOp, axes?: number[])=>{
+
+  if (axes==undefined) axes = self.shape.map((_, i) => i)
+
+  return mkTensor(
+    uop.reduce(
+      self.uop,
+      axes,
+      op
+    ),
+    self.shape.filter((x,i)=>!axes.includes(i))
+  )
+}
+
+
+const mkTensor = (graph: UOp, shape: number[]): Tensor => {
   const self = {} as Tensor;
   self.uop = graph;
   self.shape = shape;
@@ -50,6 +95,8 @@ const mkTensor = (graph: UOp, shape: TensorShape): Tensor => {
 
   self.add = binary(self, "ADD")
   self.mul = binary(self, "MUL")
+  self.sum = (axes?) => reduce(self, "ADD", axes)
+  // self.prod = (axes?) => reduce(self, "MUL", axes)
 
 
   self.matmul = (other) => {
@@ -68,11 +115,11 @@ const mkTensor = (graph: UOp, shape: TensorShape): Tensor => {
         ),
         1, "ADD"
       ),
-      mkShape([m, n])
+      mkContiguousShape([m, n])
     );
   };
 
-  self.reshape = (dims) => mkTensor(self.uop, mkShape(dims));
+  self.reshape = (dims) => mkTensor(self.uop, mkContiguousShape(dims));
 
   self.permute = (axes) =>
     mkTensor(self.uop, {
@@ -116,24 +163,67 @@ const mkTensor = (graph: UOp, shape: TensorShape): Tensor => {
     });
 
   self.run = async (_backend?: RuntimeName) => {
-    throw new Error("Tensor.run not implemented yet")
+
+
+    const logSchedule = (x:Schedule, name ="")=> x.items.forEach(x=>{
+      console.log(` ======= SCHEDULE ITEM: ${name} ======= `)
+      x.roots.forEach(u=>console.log(uop.fmt(u)))
+    })
+
+    const backend = _backend ?? BACKEND.default;
+    if (backend !== "webgpu") throw new Error(`backend ${backend} not implemented`);
+    const sched = kernelize(self, WEBGPU.createBuffer);
+
+    if(DEBUG.get()) logSchedule(sched)
+
+    // const lowSched = lower(sched, (size, data) => {
+    //   const b = WEBGPU.createBuffer(size) as typeof WEBGPU extends { createBuffer: (...args: any[]) => infer T } ? T : never;
+    //   if (data) (b as { __initData?: number[] }).__initData = data.slice();
+    //   return b;
+    // });
+
+    // if(DEBUG.get()) logSchedule(lowSched, "lower")
+
+
+    let out: number[] = [];
+    for (const item of sched.items) {
+      for (const root of item.roots) {
+        const low = linearize(root);
+        const used = buffersIn(low);
+        const bufs = item.Buffers.filter((b) => Array.from(used).some((u) => u.buf === b));
+        const k = WEBGPU.createKernel(low, bufs as Parameters<typeof WEBGPU.createKernel>[1]);
+        await k.launch();
+      }
+      out = await item.Buffers[0].read();
+    }
+    return out;
   };
 
   return self;
 };
 
 export const Tensor = {
-  const: (value: number, dims: number[]): Tensor =>
-    mkTensor({ op: "CONST", srcs: [], val: [value] }, mkShape(dims)),
+  const: (value: number, dims: number[]): Tensor => {
+    let shape = {
+      dims,
+      strides: dims.map(x=>0)
+    }  as TensorShape;
+    return mkTensor(
+      uop.view({ op: "CONST", srcs: [], val: [value] }, [shape]),
+      shape
+    );
+  },
 
-  new: (raw: Raw = 0): Tensor =>
-    mkTensor(
-      { op: "CONST", srcs: [], val: flattenRaw(raw) },
-      shapeFromRaw(raw)
-    ),
+  new: (raw: Raw = 0): Tensor => {
+    const shape = shapeFromRaw(raw);
+    return mkTensor(
+      uop.view({ op: "CONST", srcs: [], val: flattenRaw(raw) }, [{ dims: shape.dims, strides: shape.strides }]),
+      shape
+    );
+  },
 
   rand: (dims: number[]): Tensor => {
-    const shape = mkShape(dims);
-    return mkTensor({ op: "RAND", srcs: [], seed: (Math.random() * 0x7fffffff) | 0 }, shape);
+    const shape = mkContiguousShape(dims);
+    return mkTensor({ op: "RAND", srcs: [], seed: (Math.random() * 0x7fffffff) | 0, size: shape.numel }, shape);
   }
 };

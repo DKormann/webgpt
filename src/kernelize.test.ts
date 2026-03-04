@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Tensor } from "./tensor";
 import { kernelize } from "./kernelize";
+import { WEBGPU } from "./webgpu";
 
 describe("kernelize", () => {
 
@@ -9,9 +10,9 @@ describe("kernelize", () => {
     const A = Tensor.rand([4,4])
     const B = Tensor.rand([4,4])
 
-    const u = A.matmul(B).uop
+    const u = A.matmul(B)
 
-    let sched = kernelize([u])
+    let sched = kernelize(u, WEBGPU.createBuffer)
 
     expect(sched.items.length).toEqual(1)
     expect(sched.items[0].Buffers.length).toEqual(1)
