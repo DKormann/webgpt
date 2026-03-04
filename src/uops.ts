@@ -1,5 +1,7 @@
 import type { BinOp, RAWBUFFER, UOp, View } from "./types";
 
+let _nextRangeId = 1;
+
 
 export const uop
 // : Record <string, (...args: any[]) => UOp>
@@ -15,7 +17,7 @@ export const uop
   }),
 
 
-  range : (max:number):UOp & {op:"RANGE"} => ({op:"RANGE", srcs:[], max}),
+  range : (max:number):UOp & {op:"RANGE"} => ({op:"RANGE", srcs:[], id:_nextRangeId++, max}),
   endrange : (range: UOp & {op: "RANGE"}) : UOp & {op:"ENDRANGE"} => ({op:"ENDRANGE", srcs:[range]}),
 
   const : (...val: number[]): UOp & {op:"CONST"} => ({
@@ -90,8 +92,78 @@ export const uop
   },
 
   topo: (u:UOp):UOp[] =>{
-    let done: UOp[] = [];
+    const out: UOp[] = []
+    const seen = new Set<UOp>()
+    const active = new Set<UOp>()
 
+    const visit = (x: UOp) => {
+      if (seen.has(x)) return
+      if (active.has(x)) throw new Error("uop.topo cycle detected")
+      active.add(x)
+      x.srcs.forEach(visit)
+      active.delete(x)
+      seen.add(x)
+      out.push(x)
+    }
+
+    visit(u)
+    return out
+  },
+
+  dedup: (u: UOp): UOp => {
+    const memo = new Map<UOp, UOp>()
+    const pool = new Map<string, UOp>()
+    const ids = new Map<UOp, number>()
+    const objIds = new WeakMap<object, number>()
+    let nextId = 0
+    let nextObjId = 0
+
+    const getId = (x: UOp): number => {
+      if (!ids.has(x)) ids.set(x, nextId++)
+      return ids.get(x)!
+    }
+
+    const getObjId = (x: object): number => {
+      if (!objIds.has(x)) objIds.set(x, nextObjId++)
+      return objIds.get(x)!
+    }
+
+    const canon = (x: UOp): UOp => {
+      const hit = memo.get(x)
+      if (hit) return hit
+
+      const srcs = x.srcs.map(canon)
+      const args = Object.fromEntries(
+        Object.entries(x).filter(([k]) => k !== "srcs")
+      )
+
+      const key = JSON.stringify(
+        x.op === "BUFFER"
+          ? {
+              op: x.op,
+              args: { ...args, buf: { __rawbuf_id: getObjId((x as UOp & { op: "BUFFER" }).buf as object) } },
+              srcs: srcs.map(getId),
+            }
+          : {
+              op: x.op,
+              args,
+              srcs: srcs.map(getId),
+            }
+      )
+
+      const pooled = pool.get(key)
+      if (pooled) {
+        memo.set(x, pooled)
+        return pooled
+      }
+
+      const node = { ...x, srcs } as UOp
+      pool.set(key, node)
+      memo.set(x, node)
+      return node
+    }
+
+    return canon(u)
   }
 
 

@@ -23,7 +23,7 @@ export type TensorShape = {
   mask?: [number, number][];
 }
 
-export type UOpKind <OP> = UOp & {op: OP}
+export type UOpKind <OP extends UOp["op"]> = UOp & {op: OP}
 
 
 export type UOp = {
@@ -35,6 +35,7 @@ export type UOp = {
 } | BUFFER | {
   op: "RANGE"
   srcs: [],
+  id: number,
   max: number
 } | {
   op: "ENDRANGE",
@@ -84,6 +85,10 @@ export type UOp = {
   size:number,
   srcs: UOp[],
   buffers: (UOp & { op: "BUFFER" })[],
+} | {
+  op: "PROGRAM",
+  srcs: UOp[]
+  out: RAWBUFFER
 }
 
 export type HighGraph = UOp & { op: "CONST" | "BUFFER" | BinOp | "REDUCE_AXIS" | MoveOp }

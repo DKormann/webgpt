@@ -1,10 +1,12 @@
-import type { UOp, UOpKind, View } from "./types";
+import { stridesFor } from "./helpers";
+import type { Kernel, UOp, UOpKind, View } from "./types";
 import { uop } from "./uops";
+import { WEBGPU } from "./webgpu";
 
 type Range = UOpKind<"RANGE">
 
 
-const indexView = (v: View[], buf: UOp & {size:number}, rngs:Range[]) : UOp =>{
+const indexView = (v: View[], buf: UOp, rngs:Range[]) : UOp =>{
 
   if (v[0].dims.length != rngs.length) throw new Error ("VIEW missmatch")
   const view = v[0];
@@ -21,7 +23,7 @@ const indexView = (v: View[], buf: UOp & {size:number}, rngs:Range[]) : UOp =>{
 
 }
 
-export const lowerer = (graph: UOp): UOp =>{
+export const lowerer = (graph: UOpKind<"KERNEL">): UOpKind<"KERNEL"> =>{
 
   let rangify = (u:UOp, rngs: Range[] | null = null) : [UOp, Range[]] =>{
     if (u.op == "REDUCE_AXIS"){
@@ -54,7 +56,7 @@ export const lowerer = (graph: UOp): UOp =>{
     if (u.op== "ADD" || u.op == "MUL") {
       let {srcs: [a,b]} = u
       let [a_,shp] = rangify(a)
-      let [b_,_] = rangify(b)
+      let [b_,_] = rangify(b, shp)
       return [{...u, srcs:[a_,b_]}, shp]
     }
     throw new Error("unexpected:"+ uop.fmt(u))
@@ -63,12 +65,20 @@ export const lowerer = (graph: UOp): UOp =>{
   let go = (u:UOp):UOp => {
     if (u.op == "KERNEL"){
       let {srcs:[c]} = u;
-      return {...u, srcs:[go(rangify(c)[0])]}
+
+      let [k,rs] = rangify(c)
+
+      let buf = WEBGPU.createBuffer(u.size)
+
+      
+      let dims = rs.map(r=>r.max)
+      let st = uop.store(k, indexView([{dims, "strides": stridesFor(dims)}], uop.buffer(buf), rs))
+
+      u = {...u, srcs:[st]}
     }
     return {...u, srcs:u.srcs.map(go)} as UOp
   }
   
-  return go(graph)
+  return go(graph) as UOpKind<"KERNEL">
 
 }
-

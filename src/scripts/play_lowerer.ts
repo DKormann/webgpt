@@ -23,13 +23,11 @@ console.log(uop.fmt(s))
 
 let l = lowerer(s)
 
-
-
-
-console.log(uop.fmt(l))
-
+log(l)
 
 let li = linearize(l)
+
 log(li)
 
+// console.log(uop.fmt(l))
 

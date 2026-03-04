@@ -1,10 +1,11 @@
-import type { BinOp, UOp } from "./types";
+import type { BinOp, UOp, UOpKind } from "./types";
 import { uop } from "./uops";
 import { kernelize } from "./kernelize";
 import { linearize } from "./linearize";
 import { lowerer } from "./lowerer";
 import { WEBGPU } from "./webgpu";
 import { DEBUG } from "./debug";
+import { stridesFor } from "./helpers";
 
 export type Raw = number | Raw[];
 export type RuntimeName = "js" | "webgpu";
@@ -28,8 +29,6 @@ export type Tensor = {
 export const BACKEND: { default: RuntimeName } = { default: "webgpu" };
 
 const numel = (shape: number[]): number => shape.reduce((a, b) => a * b, 1);
-const stridesFor = (shape: number[]): number[] =>
-  shape.map((_, i) => shape.slice(i + 1).reduce((a, c) => a * c, 1));
 
 const flattenRaw = (raw: Raw): number[] => ([raw] as number[]).flat(Infinity) as number[];
 
@@ -142,15 +141,13 @@ const mkTensor = (graph: UOp, shape: number[]): Tensor => {
     const kg = kernelize(self.uop);
     const lg = lowerer(kg);
     if (lg.op !== "KERNEL") throw new Error("expected KERNEL root after kernelize/lowerer");
+    const lin = linearize(lg);
+    if (DEBUG.get()) lin.srcs.forEach((k) => console.log(uop.fmt(k)));
 
-    const outBuffer = WEBGPU.createBuffer(lg.size);
-    const low = linearize(lg, uop.buffer(outBuffer));
-    if (DEBUG.get()) console.log(uop.fmt(low));
-
-    const bufs = low.buffers.map((u) => u.buf);
-    const k = WEBGPU.createKernel(low.srcs, bufs as Parameters<typeof WEBGPU.createKernel>[1]);
-    await k.launch();
-    return outBuffer.read();
+    for (const lk of lin.srcs) {
+      
+    }
+    return lin.output.read();
   };
 
   return self;

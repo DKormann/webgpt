@@ -1,124 +1,45 @@
-import type { UOp, UOpKind } from "./types";
+import type { BUFFER, RAWBUFFER, UOp, UOpKind } from "./types";
 import { uop } from "./uops";
 
-type Range = UOpKind<"RANGE">;
 
-const uniqRanges = (arr: Range[]): Range[] => {
-  const seen = new Set<UOp>();
-  const out: Range[] = [];
-  for (const r of arr) {
-    if (!seen.has(r)) {
-      seen.add(r);
-      out.push(r);
+type KernelUOp = UOp & { op: "KERNEL" };
+
+export type Linearized = {
+  kernels: KernelUOp[];
+  buffers: RAWBUFFER[];
+  output: RAWBUFFER;
+};
+
+export const linearize = (root: KernelUOp): UOpKind<"PROGRAM"> => {
+  const topo = uop.topo(root);
+  let kernels = topo.filter((x): x is KernelUOp => x.op === "KERNEL");
+  if (kernels.length === 0) throw new Error("linearize expected at least one KERNEL");
+
+  let getbuffer =(K:KernelUOp)=>{
+    let st = K.srcs[0]
+
+    if (st.op == "STORE"){
+      let idx = st.srcs[1]
+      if (idx.op == "INDEX") {
+        let buf = idx.srcs[0]
+        if (buf.op == "BUFFER") return buf as BUFFER 
+      }
     }
-  }
-  return out;
-};
-
-const collectRanges = (node: UOp): Range[] => {
-  if (node.op === "RANGE") return [node];
-  if (node.op === "KERNEL") return collectRanges(node.srcs[0]);
-  if (node.op === "ADD" || node.op === "MUL" || node.op === "INDEX") {
-    return uniqRanges(node.srcs.flatMap((s) => collectRanges(s)) as Range[]);
-  }
-  if (node.op === "REDUCE") return collectRanges(node.srcs[0]);
-  return [];
-};
-
-const normalizeExpr = (node: UOp): UOp => {
-  if (node.op === "KERNEL") return normalizeExpr(node.srcs[0]);
-  if (node.op === "INDEX") {
-    const base = normalizeExpr(node.srcs[0]);
-    const idx = normalizeExpr(node.srcs[1]);
-    if (base.op === "KERNEL") return uop.index(normalizeExpr(base.srcs[0]), idx);
-    if (base.op === "INDEX") return uop.index(normalizeExpr(base.srcs[0]), idx);
-    return uop.index(base, idx);
-  }
-  if (node.op === "ADD" || node.op === "MUL") {
-    return { op: node.op, srcs: [normalizeExpr(node.srcs[0]), normalizeExpr(node.srcs[1])] };
-  }
-  if (node.op === "REDUCE") {
-    return { op: "REDUCE", bin: node.bin, keep: node.keep, srcs: [normalizeExpr(node.srcs[0])] };
-  }
-  return node;
-};
-
-const flattenRanges = (ranges: Range[]): UOp => {
-  if (ranges.length === 0) return uop.const(0);
-  let idx: UOp = uop.const(0);
-  for (let i = 0; i < ranges.length; i++) {
-    const stride = ranges.slice(i + 1).reduce((a, r) => a * r.max, 1);
-    const term = stride === 1 ? ranges[i] : uop.mul(ranges[i], uop.const(stride));
-    idx = i === 0 ? term : uop.add(idx, term);
-  }
-  return idx;
-};
-
-const asDstIndex = (dst: UOp, outputRanges: Range[]): UOp & { op: "INDEX" } => {
-  if (dst.op === "INDEX") return dst;
-  if (dst.op === "BUFFER") return uop.index(dst, flattenRanges(outputRanges)) as UOp & { op: "INDEX" };
-  throw new Error(`linearize unsupported store dst: ${dst.op}`);
-};
-
-const linearizeStore = (st: UOp & { op: "STORE" }): UOp[] => {
-  const src = st.srcs[0];
-  const dst = st.srcs[1];
-
-  if (src.op === "REDUCE") {
-    if (src.bin !== "ADD") throw new Error("linearize only supports REDUCE ADD");
-
-    const outputRanges = uniqRanges(src.keep);
-    const redExpr = src.srcs[0];
-    const allRanges = collectRanges(redExpr);
-    const redRanges = allRanges.filter((r) => !outputRanges.includes(r));
-
-    const d = asDstIndex(dst, outputRanges);
-    if (d.srcs[0].op !== "BUFFER") throw new Error("linearize reduce dst must index a BUFFER");
-
-    return [
-      ...outputRanges,
-      uop.store(uop.const(0), d),
-      ...redRanges,
-      uop.store(uop.add(uop.index(d.srcs[0], d.srcs[1]), redExpr), d),
-      ...redRanges.slice().reverse().map((r) => uop.endrange(r)),
-      ...outputRanges.slice().reverse().map((r) => uop.endrange(r)),
-    ];
+    throw new Error("MALFORMD KERNEL" + uop.fmt(K))
   }
 
-  const outputRanges = collectRanges(src);
-  const d = asDstIndex(dst, outputRanges);
-  return [
-    ...outputRanges,
-    uop.store(src, d),
-    ...outputRanges.slice().reverse().map((r) => uop.endrange(r)),
-  ];
-};
+  kernels = kernels.map(x=>{
+    let go = ((u:UOp):UOp=>{
+      if (u.op == "KERNEL") return getbuffer(u)
+      return {...u,srcs: u.srcs.map(go)} as UOp
+    });
+    return {...x,srcs: x.srcs.map(go)} as KernelUOp
+  })
 
-const uniqBuffers = (nodes: UOp[]): (UOp & { op: "BUFFER" })[] => {
-  const out: (UOp & { op: "BUFFER" })[] = [];
-  const seen = new Set<UOp>();
-  const walk = (u: UOp) => {
-    if (u.op === "BUFFER" && !seen.has(u)) {
-      seen.add(u);
-      out.push(u);
-    }
-    u.srcs.forEach(walk);
-  };
-  nodes.forEach(walk);
-  return out;
-};
+  return uop.dedup({
+    op:"PROGRAM",
+    srcs:kernels,
+    out: getbuffer(root).buf
+  }) as UOpKind<"PROGRAM">
 
-export const linearize = (graph: UOp, outBuffer?: UOp & { op: "BUFFER" }): UOp & { op: "KERNEL" } => {
-  if (graph.op === "KERNEL") {
-    const src = normalizeExpr(graph.srcs[0]);
-    const out = outBuffer ?? uop.buffer({ size: graph.size, read: async () => [] });
-    const nodes = linearizeStore(uop.store(src, out));
-    return { op: "KERNEL", size: graph.size, srcs: nodes, buffers: uniqBuffers(nodes) };
-  }
-  if (graph.op === "STORE") {
-    const nodes = linearizeStore(graph);
-    return { op: "KERNEL", size: outBuffer?.buf.size ?? 1, srcs: nodes, buffers: uniqBuffers(nodes) };
-  }
-  const n = normalizeExpr(graph);
-  return { op: "KERNEL", size: outBuffer?.buf.size ?? 1, srcs: [n], buffers: uniqBuffers([n]) };
 };
