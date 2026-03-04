@@ -1,13 +1,5 @@
-import { PatternMatcher, UPat } from "./patter_matcher";
-import type { Op, RAWBUFFER, Schedule, UOp, UOpKind, View } from "./types";
+import type { UOp, UOpKind, View } from "./types";
 import { uop } from "./uops";
-
-
-
-
-let pm = new PatternMatcher([
-
-])
 
 type Range = UOpKind<"RANGE">
 
@@ -15,6 +7,17 @@ type Range = UOpKind<"RANGE">
 const indexView = (v: View[], buf: UOp & {size:number}, rngs:Range[]) : UOp =>{
 
   if (v[0].dims.length != rngs.length) throw new Error ("VIEW missmatch")
+  const view = v[0];
+
+  let idx: UOp = uop.const(0);
+  for (let i = 0; i < rngs.length; i++) {
+    const r = rngs[i];
+    const s = view.strides[i] ?? 0;
+    const term = s === 1 ? r : uop.mul(r, uop.const(s));
+    idx = i === 0 ? term : uop.add(idx, term);
+  }
+
+  return uop.index(buf, idx);
 
 }
 
@@ -42,7 +45,10 @@ export const lowerer = (graph: UOp): UOp =>{
     }
 
     if (u.op =="BUFFER" || u.op =="RAND"){
-
+      let size = u.op == "BUFFER" ? u.buf.size : u.size ?? 0;
+      if (rngs == null) rngs = [uop.range(size)]
+      if (rngs.length > 1 || rngs[0].max != size) throw new Error("wrong ranges")
+      return [uop.index(u, rngs[0]), rngs]
     }
 
     if (u.op== "ADD" || u.op == "MUL") {
@@ -65,5 +71,4 @@ export const lowerer = (graph: UOp): UOp =>{
   return go(graph)
 
 }
-
 
