@@ -94,12 +94,31 @@ const linearizeStore = (st: UOp & { op: "STORE" }): UOp[] => {
   ];
 };
 
-export const linearize = (graph: UOp, outBuffer?: UOp & { op: "BUFFER" }): UOp[] => {
+const uniqBuffers = (nodes: UOp[]): (UOp & { op: "BUFFER" })[] => {
+  const out: (UOp & { op: "BUFFER" })[] = [];
+  const seen = new Set<UOp>();
+  const walk = (u: UOp) => {
+    if (u.op === "BUFFER" && !seen.has(u)) {
+      seen.add(u);
+      out.push(u);
+    }
+    u.srcs.forEach(walk);
+  };
+  nodes.forEach(walk);
+  return out;
+};
+
+export const linearize = (graph: UOp, outBuffer?: UOp & { op: "BUFFER" }): UOp & { op: "KERNEL" } => {
   if (graph.op === "KERNEL") {
     const src = normalizeExpr(graph.srcs[0]);
     const out = outBuffer ?? uop.buffer({ size: graph.size, read: async () => [] });
-    return linearizeStore(uop.store(src, out));
+    const nodes = linearizeStore(uop.store(src, out));
+    return { op: "KERNEL", size: graph.size, srcs: nodes, buffers: uniqBuffers(nodes) };
   }
-  if (graph.op === "STORE") return linearizeStore(graph);
-  return [normalizeExpr(graph)];
+  if (graph.op === "STORE") {
+    const nodes = linearizeStore(graph);
+    return { op: "KERNEL", size: outBuffer?.buf.size ?? 1, srcs: nodes, buffers: uniqBuffers(nodes) };
+  }
+  const n = normalizeExpr(graph);
+  return { op: "KERNEL", size: outBuffer?.buf.size ?? 1, srcs: [n], buffers: uniqBuffers([n]) };
 };

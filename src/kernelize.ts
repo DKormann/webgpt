@@ -11,7 +11,7 @@ export const findSize = (g:UOp):number=>{
 }
 
 
-export const mkKernel = (g:UOp):UOp =>( {op:"KERNEL", size:findSize(g), srcs: [g]})
+export const mkKernel = (g:UOp):UOp =>( {op:"KERNEL", size:findSize(g), srcs: [g], buffers: []})
 
 
 let pm = new PatternMatcher([
@@ -27,4 +27,3 @@ export const kernelize = (u:UOp):UOp => {
   return mkKernel(pm.match(u))
 
 }
-

@@ -50,11 +50,48 @@ export const uop
   index: (buf: UOp, index: UOp): UOp => ({op:"INDEX", srcs:[buf,index]}),
 
   fmt: (u:UOp) : string => {
-    let head = u.op
-    Object.entries(u).forEach(([k,v])=>{if (!["srcs", "op", "seed"].includes(k)) head += ` ${k} : ${JSON.stringify(v)}`})
+    const counts = new Map<UOp, number>()
+    const walk = (x: UOp) => {
+      counts.set(x, (counts.get(x) ?? 0) + 1)
+      x.srcs.forEach(walk)
+    }
+    walk(u)
 
-    if (u.srcs.length > 0) head += ('\n' + u.srcs.map(x=>uop.fmt(x)).join("\n")).replace(/\n/g,"\n  ")
-    return head
+    const shared = new Set<UOp>(Array.from(counts.entries()).filter(([, c]) => c > 1).map(([x]) => x))
+    const names = new Map<UOp, string>()
+    let next = 0
+    shared.forEach((x) => names.set(x, `v${next++}`))
+
+    const emitted = new Set<UOp>()
+
+    const head = (x: UOp): string => {
+      let h = x.op
+      Object.entries(x).forEach(([k, v]) => {
+        if (!["srcs", "op", "seed"].includes(k)) h += ` ${k}:${JSON.stringify(v)}`
+      })
+      return h
+    }
+
+    const render = (x: UOp, indent = ""): string => {
+      if (shared.has(x)) {
+        const n = names.get(x)!
+        if (emitted.has(x)) return `${indent}${n}`
+        emitted.add(x)
+        const line = `${indent}${n} := ${head(x)}`
+        const kids = x.srcs.map((s) => render(s, `${indent}  `)).join("\n")
+        return kids ? `${line}\n${kids}` : line
+      }
+      const line = `${indent}${head(x)}`
+      const kids = x.srcs.map((s) => render(s, `${indent}  `)).join("\n")
+      return kids ? `${line}\n${kids}` : line
+    }
+
+    return render(u)
+  },
+
+  topo: (u:UOp):UOp[] =>{
+    let done: UOp[] = [];
+
   }
 
 

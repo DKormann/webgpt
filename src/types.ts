@@ -82,7 +82,8 @@ export type UOp = {
 } | {
   op: "KERNEL",
   size:number,
-  srcs: [UOp],
+  srcs: UOp[],
+  buffers: (UOp & { op: "BUFFER" })[],
 }
 
 export type HighGraph = UOp & { op: "CONST" | "BUFFER" | BinOp | "REDUCE_AXIS" | MoveOp }

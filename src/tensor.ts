@@ -52,16 +52,6 @@ const normalizeAxes = (axes: number[] | undefined, rank: number): number[] => {
   return [...new Set(norm)].sort((a, b) => b - a);
 };
 
-const buffersIn = (graph: UOp[]): Set<UOp & { op: "BUFFER" }> => {
-  const out = new Set<UOp & { op: "BUFFER" }>();
-  const walk = (u: UOp) => {
-    if (u.op === "BUFFER") out.add(u);
-    u.srcs.forEach(walk);
-  };
-  graph.forEach(walk);
-  return out;
-};
-
 const binary = (self: Tensor, op: BinOp) => (other: Tensor) => {
   if (JSON.stringify(self.shape) !== JSON.stringify(other.shape)) throw new Error("shape mismatch");
   return mkTensor({ op, srcs: [self.uop, other.uop] }, self.shape.slice());
@@ -155,11 +145,10 @@ const mkTensor = (graph: UOp, shape: number[]): Tensor => {
 
     const outBuffer = WEBGPU.createBuffer(lg.size);
     const low = linearize(lg, uop.buffer(outBuffer));
-    if (DEBUG.get()) console.log(low.map((x) => uop.fmt(x)).join("\n"));
+    if (DEBUG.get()) console.log(uop.fmt(low));
 
-    const used = buffersIn(low);
-    const bufs = Array.from(used).map((u) => u.buf);
-    const k = WEBGPU.createKernel(low, bufs as Parameters<typeof WEBGPU.createKernel>[1]);
+    const bufs = low.buffers.map((u) => u.buf);
+    const k = WEBGPU.createKernel(low.srcs, bufs as Parameters<typeof WEBGPU.createKernel>[1]);
     await k.launch();
     return outBuffer.read();
   };
