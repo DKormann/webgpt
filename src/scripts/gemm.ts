@@ -2,9 +2,9 @@
 import { DEBUG } from "../debug";
 import { Tensor } from "../tensor";
 
-DEBUG.set(0)
+DEBUG.set(1)
 
-const N = 100
+const N = 250
 
 const a = Tensor.rand([N, N])
 const b = Tensor.rand([N, N])

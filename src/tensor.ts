@@ -65,6 +65,16 @@ const buffersIn = (graph: UOp[]): (UOp & { op: "BUFFER" })[] => {
   return out;
 };
 
+const outputBufferIn = (graph: UOp[]): (UOp & { op: "BUFFER" }) => {
+  const store = [...graph].reverse().find((u) => u.op === "STORE");
+  if (!store || store.op !== "STORE") throw new Error("kernel has no STORE");
+  const dst = store.srcs[1];
+  if (dst.op !== "INDEX") throw new Error("STORE dst must be INDEX");
+  const base = dst.srcs[0];
+  if (base.op !== "BUFFER") throw new Error("STORE dst base must be BUFFER");
+  return base;
+};
+
 const binary = (self: Tensor, op: BinOp) => (other: Tensor) => {
   if (JSON.stringify(self.shape) !== JSON.stringify(other.shape)) throw new Error("shape mismatch");
   return mkTensor({ op, srcs: [self.uop, other.uop] }, self.shape.slice());
@@ -155,17 +165,20 @@ const mkTensor = (graph: UOp, shape: number[]): Tensor => {
     const kg = kernelize(self.uop);
     const lg = lowerer(kg);
     if (lg.op !== "KERNEL") throw new Error("expected KERNEL root after kernelize/lowerer");
-    const prog = linearize(lg);
-    if (prog.op !== "PROGRAM") throw new Error("linearize must return PROGRAM");
-    if (DEBUG.get()) prog.srcs.forEach((k) => console.log(uop.fmt(k)));
+    const sched = linearize(lg);
+    if (sched.length === 0) throw new Error("linearize returned no kernels");
 
-    for (const lk of prog.srcs) {
-      if (lk.op !== "KERNEL") continue;
-      const bufs = buffersIn(lk.srcs).map((b) => b.buf);
-      const k = WEBGPU.createKernel(lk.srcs, bufs as Parameters<typeof WEBGPU.createKernel>[1]);
+    let out: ReturnType<typeof buffersIn>[number] | null = null;
+    for (const item of sched) {
+      const graph = item.steps;
+      if (DEBUG.get()) console.log(item.toString());
+      const bufs = buffersIn(graph).map((b) => b.buf);
+      const k = WEBGPU.createKernel(graph, bufs as Parameters<typeof WEBGPU.createKernel>[1]);
       await k.launch();
     }
-    return prog.out.read();
+    out = outputBufferIn(sched[sched.length-1].steps);
+    if (!out) throw new Error("no output buffer found");
+    return out.buf.read();
   };
 
   return self;
