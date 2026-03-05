@@ -168,19 +168,27 @@ const mkTensor = (graph: UOp, shape: number[]): Tensor => {
     const sched = linearize(lg);
     if (sched.length === 0) throw new Error("linearize returned no kernels");
 
+    if (DEBUG.get()) sched.forEach(s=>console.log(s.toString()))
+
+
     let out: ReturnType<typeof buffersIn>[number] | null = null;
-    for (const item of sched) {
-      const graph = item.steps;
-      if (DEBUG.get()) console.log(item.toString());
+
+    let kernels = sched.map(s=>{
+      const graph = s.steps;
       const bufs = buffersIn(graph).map((b) => b.buf);
-      const k = WEBGPU.createKernel(graph, bufs as Parameters<typeof WEBGPU.createKernel>[1]);
-      await k.launch();
-    }
+      return WEBGPU.createKernel(graph, bufs as Parameters<typeof WEBGPU.createKernel>[1]);
+    })
+
+    let st = performance.now()
+
+    kernels.forEach(k=>k.launch())
+
+    if (DEBUG.get()) console.log(`execution duration: ${(performance.now()- st)/1e3}s`)
+
     out = outputBufferIn(sched[sched.length-1].steps);
     if (!out) throw new Error("no output buffer found");
     return out.buf.read();
   };
-
   return self;
 };
 

@@ -1,5 +1,3 @@
-import { partition } from "./helpers";
-import { PatternMatcher, UPat } from "./patter_matcher";
 import { UOp, UOpKind } from "./types";
 import { uop } from "./uops";
 
