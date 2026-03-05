@@ -5,7 +5,7 @@ import { linearize } from "./linearize";
 import { lowerer } from "./lowerer";
 import { WEBGPU } from "./webgpu";
 import { DEBUG } from "./debug";
-import { stridesFor } from "./helpers";
+import { numel, stridesFor } from "./helpers";
 
 export type Raw = number | Raw[];
 export type RuntimeName = "js" | "webgpu";
@@ -28,7 +28,6 @@ export type Tensor = {
 
 export const BACKEND: { default: RuntimeName } = { default: "webgpu" };
 
-const numel = (shape: number[]): number => shape.reduce((a, b) => a * b, 1);
 
 const flattenRaw = (raw: Raw): number[] => ([raw] as number[]).flat(Infinity) as number[];
 
@@ -180,11 +179,8 @@ const mkTensor = (graph: UOp, shape: number[]): Tensor => {
     })
 
     let st = performance.now()
-
     kernels.forEach(k=>k.launch())
-
     if (DEBUG.get()) console.log(`execution duration: ${(performance.now()- st)/1e3}s`)
-
     out = outputBufferIn(sched[sched.length-1].steps);
     if (!out) throw new Error("no output buffer found");
     return out.buf.read();

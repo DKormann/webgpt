@@ -32,6 +32,11 @@ export type UOp = {
     UOp, // source
     UOp // destination
   ]
+} | {
+  op: "BLOCK" | "THREAD",
+  srcs: [],
+  axis: 0 | 1 | 2,
+  extend: number
 } | BUFFER | {
   op: "RANGE" | "SPECIAL"
   srcs: [],
@@ -123,6 +128,8 @@ export type Schedule = {
 export type RAWBUFFER = {size: number, read: ()=>Promise<number[]>}
 
 export type BACKEND <B extends RAWBUFFER> = {
+  max_blocks: [number, number, number]
+  max_threads: [number, number, number]
   createBuffer : (size: number) => B
   createKernel : (graph: UOp[], buffers: B[]) => Kernel
 }

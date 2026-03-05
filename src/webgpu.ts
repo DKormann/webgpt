@@ -79,7 +79,10 @@ const codegen = (graphIn: UOp[], buffers: WEBGPUBUFFER[]) => {
   const idx = (u: UOp): string => {
     if (u.op === "CONST") return `${c(u)}u`;
     if (u.op === "RANGE" || u.op === "SPECIAL") return names.get(u) ?? (() => { throw new Error("range used outside scope"); })();
-    if (op2(u)) return `(${idx(u.srcs[0])} ${u.op === "ADD" ? "+" : "*"} ${idx(u.srcs[1])})`;
+    if (op2(u)) {
+      const [a, b] = u.srcs as [UOp, UOp];
+      return `(${idx(a)} ${u.op === "ADD" ? "+" : "*"} ${idx(b)})`;
+    }
     throw new Error(`unsupported index arg: ${u.op}`);
   };
 
@@ -89,7 +92,10 @@ const codegen = (graphIn: UOp[], buffers: WEBGPUBUFFER[]) => {
       return Number.isInteger(v) ? `${v}.0` : String(v);
     }
     if (u.op === "RANGE" || u.op === "SPECIAL") return `f32(${names.get(u) ?? (() => { throw new Error("range used outside scope"); })()})`;
-    if (op2(u)) return `(${val(u.srcs[0])} ${u.op === "ADD" ? "+" : "*"} ${val(u.srcs[1])})`;
+    if (op2(u)) {
+      const [a, b] = u.srcs as [UOp, UOp];
+      return `(${val(a)} ${u.op === "ADD" ? "+" : "*"} ${val(b)})`;
+    }
     if (u.op === "DEFINE_REG") return regs.get(u) ?? (() => { throw new Error("register used before declaration"); })();
     if (u.op === "NOOP") {
       const ch = u.srcs[0];
@@ -128,10 +134,12 @@ const codegen = (graphIn: UOp[], buffers: WEBGPUBUFFER[]) => {
       lines.push(`var ${r}: f32 = ${u.default};`);
       continue;
     }
-    if (op2(u) && u.srcs[0]?.op === "DEFINE_REG") {
-      const r = regs.get(u.srcs[0]);
+    if (op2(u)) {
+      const [a, b] = u.srcs as [UOp, UOp];
+      if (a.op !== "DEFINE_REG") continue;
+      const r = regs.get(a);
       if (!r) throw new Error("register update with undeclared register");
-      lines.push(`${r} = ${u.op === "ADD" ? `${r} + ${val(u.srcs[1])}` : `${r} * ${val(u.srcs[1])}`};`);
+      lines.push(`${r} = ${u.op === "ADD" ? `${r} + ${val(b)}` : `${r} * ${val(b)}`};`);
       continue;
     }
     if (u.op === "NOOP" || u.op === "KERNEL" || u.op === "RAND" || u.op === "BUFFER" || u.op === "CONST" || u.op === "INDEX" || op2(u)) continue;
@@ -167,6 +175,8 @@ const codegen = (graphIn: UOp[], buffers: WEBGPUBUFFER[]) => {
 };
 
 export const WEBGPU: BACKEND<WEBGPUBUFFER> = {
+  max_blocks: [65535, 65535, 65535],
+  max_threads: [256, 256, 64],
   createBuffer,
   createKernel: (graph: UOp[], buffers: WEBGPUBUFFER[]) => {
     const wgsl = codegen(graph, buffers);

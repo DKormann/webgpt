@@ -12,6 +12,9 @@ export const log =<T> (...args:[...any[], T]):T =>{
 export const stridesFor = (shape: number[]): number[] =>
   shape.map((_, i) => shape.slice(i + 1).reduce((a, c) => a * c, 1));
 
+
+export const numel = (shape: number[]): number => shape.reduce((a, b) => a * b, 1);
+
 export const partition =<T> (ls:T[], f:(t:T)=>boolean):[T[],T[]] =>{
   let a : T[] = []
   let b : T[] = []

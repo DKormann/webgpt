@@ -1,3 +1,4 @@
+import { numel } from "./helpers";
 import { UOp, UOpKind } from "./types";
 import { uop } from "./uops";
 
@@ -29,7 +30,7 @@ export class ScheduleItem{
       let ranges = uops.filter(x=>x.op == "RANGE");
       ranges.forEach(r=>r.op = "SPECIAL")
 
-      this.steps = [
+      uops = [
         ...ranges,
         ...uops.filter(x=>!ranges.includes(x)),
       ]
@@ -54,7 +55,7 @@ export class ScheduleItem{
         else if (u.srcs.some(x=>loopbody.has(x))) loopbody.add(u)
       })
 
-      this.steps = [
+      uops = [
         ...specials,
         defreg,
         ...uops.filter(x=> x.op != "SPECIAL" && !loopbody.has(x) && !loopafter.has(x)),
@@ -63,8 +64,30 @@ export class ScheduleItem{
         ...loops.reverse().map(l=>uop.endrange(l as UOpKind<"RANGE">)),
         ...loopafter
       ]
-    }  
+    }
 
+    let specials  = uops.filter(x=>x.op == "SPECIAL") as UOpKind<"SPECIAL">[]
+
+    if (specials.length>3) throw new Error("not implemented")
+    let threads_per_dim = [128, 64, 16] [specials.length]
+    let threads : UOpKind<"THREAD"> [] = specials.map((s,i)=> ({op:"THREAD", axis:i as 0, extend:Math.min(s.max, threads_per_dim), srcs:[]}))
+    let blocks : UOp[] = specials.map((s,i)=> ({op: "BLOCK", axis:i as 0, extend:Math.ceil(s.max/threads[i].extend), srcs:[]}))
+
+    specials.forEach((special,i)=> replace(special, uop.add(threads[i], uop.mul(blocks[i], uop.const(threads[i].extend)))))
+
+    let fixup = ()=>{
+      let go = ()=>{
+        for (let u of uops){ for (let s of u.srcs){
+          if (!uops.includes(s)) {uops = [s, ...uops]; console.log(s); return true}
+        }}
+        return false
+      }
+      while (go()){}
+    }
+
+    fixup()
+
+    this.steps = uops
   }
   toString(){
 
