@@ -61,9 +61,24 @@ const createBuffer = (size: number): WEBGPUBUFFER => {
 };
 
 const bodyOf = (g: UOp[]) => (g.length === 1 && g[0].op === "KERNEL") ? g[0].srcs : g;
+const randNodesOf = (graph: UOp[]): (UOp & { op: "RAND" })[] => {
+  const out: (UOp & { op: "RAND" })[] = [];
+  const seen = new Set<UOp>();
+  const walk = (u: UOp) => {
+    if (seen.has(u)) return;
+    seen.add(u);
+    if (u.op === "RAND") out.push(u);
+    u.srcs.forEach(walk);
+  };
+  graph.forEach(walk);
+  return out;
+};
 
 const codegen = (graphIn: UOp[], buffers: WEBGPUBUFFER[]) => {
   const graph = bodyOf(graphIn);
+  const rands = randNodesOf(graph);
+  const randIx = new Map(rands.map((r, i) => [r, i]));
+  const seedBinding = buffers.length;
   const bind = new Map(buffers.map((b, i) => [b, i]));
   const names = new Map<UOp, string>();
   const regs = new Map<UOp, string>();
@@ -104,7 +119,11 @@ const codegen = (graphIn: UOp[], buffers: WEBGPUBUFFER[]) => {
     }
     if (u.op === "INDEX") {
       const [base, i] = u.srcs;
-      if (base.op === "RAND") return `randf(${(Math.floor(base.seed) >>> 0)}u ^ ${idx(i)})`;
+      if (base.op === "RAND") {
+        const ri = randIx.get(base);
+        if (ri == null) throw new Error("missing RAND seed binding");
+        return `randf(seeds[${ri}u] ^ ${idx(i)})`;
+      }
       if (base.op !== "BUFFER") throw new Error(`unsupported value index base: ${base.op}`);
       const b = bind.get(base.buf as WEBGPUBUFFER);
       if (b == null) throw new Error("graph references unknown kernel buffer");
@@ -152,11 +171,13 @@ const codegen = (graphIn: UOp[], buffers: WEBGPUBUFFER[]) => {
   }
   while (ranges.length) { ranges.pop(); lines.push("}"); }
 
-  const hasRand = (u: UOp): boolean => u.op === "RAND" || u.srcs.some(hasRand);
-  const needRand = graph.some(hasRand);
-  const guard = specials.map((u, i) => `${gid[i]} >= ${u.max}u`).join(" || ");
+  const needRand = rands.length > 0;
+  const guard = specials.map((u) => `${gid[u.axis]} >= ${u.extent}u`).join(" || ");
+  const threadExt = [1, 1, 1] as [number, number, number];
+  for (const s of specials) threadExt[s.axis] = s.thread;
   return [
     ...buffers.map((_, i) => `@group(0) @binding(${i}) var<storage, read_write> b${i}: array<f32>;`),
+    ...(needRand ? [`@group(0) @binding(${seedBinding}) var<storage, read> seeds: array<u32>;`] : []),
     ...(needRand ? [
       "fn randf(x:u32) -> f32 {",
       "  var z = x + 0x9e3779b9u;",
@@ -166,7 +187,7 @@ const codegen = (graphIn: UOp[], buffers: WEBGPUBUFFER[]) => {
       "  return f32(z) * 2.3283064365386963e-10;",
       "}"
     ] : []),
-    "@compute @workgroup_size(1)",
+    `@compute @workgroup_size(${threadExt[0]}, ${threadExt[1]}, ${threadExt[2]})`,
     "fn main(@builtin(global_invocation_id) gid: vec3<u32>) {",
     ...(guard ? [`  if (${guard}) { return; }`] : []),
     ...lines.map((l) => `  ${l}`),
@@ -185,14 +206,24 @@ export const WEBGPU: BACKEND<WEBGPUBUFFER> = {
     const launch = async () => {
       const d = await getDevice();
       const gbufs = await Promise.all(buffers.map(ensure));
-      const specials = bodyOf(graph).filter((u): u is UOp & { op: "SPECIAL" } => u.op === "SPECIAL");
-      const dispatch = [Math.max(1, specials[0]?.max ?? 1), Math.max(1, specials[1]?.max ?? 1), Math.max(1, specials[2]?.max ?? 1)] as const;
+      const gbody = bodyOf(graph);
+      const rands = randNodesOf(gbody);
+      const specials = gbody.filter((u): u is UOp & { op: "SPECIAL" } => u.op === "SPECIAL");
+      const dispatch: [number, number, number] = [1, 1, 1];
+      for (const s of specials) dispatch[s.axis] = Math.max(1, s.block);
+      const seedBuf = rands.length
+        ? d.createBuffer({ size: Math.max(4, rands.length * 4), usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST })
+        : null;
+      if (seedBuf) d.queue.writeBuffer(seedBuf, 0, new Uint32Array(rands.map((r) => Math.floor(r.seed) >>> 0)));
 
       const m = d.createShaderModule({ code: wgsl });
       const p = d.createComputePipeline({ layout: "auto", compute: { module: m, entryPoint: "main" } });
       const bg = d.createBindGroup({
         layout: p.getBindGroupLayout(0),
-        entries: gbufs.map((buffer, i) => ({ binding: i, resource: { buffer } }))
+        entries: [
+          ...gbufs.map((buffer, i) => ({ binding: i, resource: { buffer } })),
+          ...(seedBuf ? [{ binding: buffers.length, resource: { buffer: seedBuf } }] : []),
+        ]
       });
 
       const ce = d.createCommandEncoder();
@@ -202,6 +233,7 @@ export const WEBGPU: BACKEND<WEBGPUBUFFER> = {
       pass.dispatchWorkgroups(dispatch[0], dispatch[1], dispatch[2]);
       pass.end();
       d.queue.submit([ce.finish()]);
+      seedBuf?.destroy();
     };
 
     return { graph, buffers, launch };

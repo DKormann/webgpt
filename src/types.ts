@@ -33,12 +33,14 @@ export type UOp = {
     UOp // destination
   ]
 } | {
-  op: "BLOCK" | "THREAD",
+  op: "SPECIAL"
   srcs: [],
   axis: 0 | 1 | 2,
-  extend: number
+  extent: number,
+  block: number,
+  thread: number,
 } | BUFFER | {
-  op: "RANGE" | "SPECIAL"
+  op: "RANGE"
   srcs: [],
   id: number,
   max: number

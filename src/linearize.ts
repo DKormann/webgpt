@@ -1,4 +1,3 @@
-import { numel } from "./helpers";
 import { UOp, UOpKind } from "./types";
 import { uop } from "./uops";
 
@@ -26,14 +25,11 @@ export class ScheduleItem{
       reducer = reducers[0]
     }
 
-    if (!reducer){
-      let ranges = uops.filter(x=>x.op == "RANGE");
-      ranges.forEach(r=>r.op = "SPECIAL")
+    let specials : UOpKind< "RANGE">[] = []
 
-      uops = [
-        ...ranges,
-        ...uops.filter(x=>!ranges.includes(x)),
-      ]
+    if (!reducer){
+      specials = uops.filter((x): x is UOpKind<"RANGE"> => x.op == "RANGE");
+      uops = [...specials, ...uops.filter((x) => !specials.includes(x as UOpKind<"RANGE">))];
     }else{
 
       let defreg:UOp = uop.defReg(reducer.bin == "ADD" ? 0 : 1)
@@ -41,10 +37,10 @@ export class ScheduleItem{
       let usereg:UOp = uop.noop(accreg)
       replace(reducer, usereg)
 
-      let ranges = uops.filter(x=>x.op == "RANGE") as UOpKind<"SPECIAL"|"RANGE">[];
-      let specials = ranges.filter(r=>reducer.keep.includes(r.id));
-      let loops = ranges.filter(r=>!specials.includes(r))
-      specials.forEach(s=>s.op="SPECIAL")
+      const ranges = uops.filter((x): x is UOpKind<"RANGE"> => x.op == "RANGE");
+      specials = ranges.filter(r=>reducer.keep.includes(r.id));
+      const loops = ranges.filter(r=>!specials.includes(r));
+      specials.forEach((r, i) => replace(r, specials[i]));
   
       let loopbody = new Set<UOp> ([...loops]);
       let loopafter = new Set<UOp> ([usereg]);
@@ -58,7 +54,7 @@ export class ScheduleItem{
       uops = [
         ...specials,
         defreg,
-        ...uops.filter(x=> x.op != "SPECIAL" && !loopbody.has(x) && !loopafter.has(x)),
+        ...uops.filter(x=> x.op != "RANGE" && !loopbody.has(x) && !loopafter.has(x)),
         ...uops.filter(x=>loopbody.has(x)),
         accreg,
         ...loops.reverse().map(l=>uop.endrange(l as UOpKind<"RANGE">)),
@@ -66,26 +62,15 @@ export class ScheduleItem{
       ]
     }
 
-    let specials  = uops.filter(x=>x.op == "SPECIAL") as UOpKind<"SPECIAL">[]
-
     if (specials.length>3) throw new Error("not implemented")
-    let threads_per_dim = [128, 64, 16] [specials.length]
-    let threads : UOpKind<"THREAD"> [] = specials.map((s,i)=> ({op:"THREAD", axis:i as 0, extend:Math.min(s.max, threads_per_dim), srcs:[]}))
-    let blocks : UOp[] = specials.map((s,i)=> ({op: "BLOCK", axis:i as 0, extend:Math.ceil(s.max/threads[i].extend), srcs:[]}))
 
-    specials.forEach((special,i)=> replace(special, uop.add(threads[i], uop.mul(blocks[i], uop.const(threads[i].extend)))))
+    const threadsPerDim = [128, 64, 16][specials.length] ?? 128
+    specials.forEach((range: UOpKind<"RANGE">, i) => {
+      const thread = Math.max(1, Math.min(range.max, threadsPerDim));
+      const block = Math.max(1, Math.ceil(range.max / thread));
+      replace(range, {op: "SPECIAL", srcs:[], extent: range.max, axis: i as 0|1|2, block, thread})
+    });
 
-    let fixup = ()=>{
-      let go = ()=>{
-        for (let u of uops){ for (let s of u.srcs){
-          if (!uops.includes(s)) {uops = [s, ...uops]; console.log(s); return true}
-        }}
-        return false
-      }
-      while (go()){}
-    }
-
-    fixup()
 
     this.steps = uops
   }

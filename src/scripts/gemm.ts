@@ -12,7 +12,7 @@ const b = Tensor.rand([N, N])
 
 let st = performance.now()
 
-let res = await a.matmul(b).sum().run("webgpu")
+let res = await a.matmul(b).run("webgpu")
 
 let dt = performance.now() - st
 

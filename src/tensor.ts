@@ -163,6 +163,10 @@ const mkTensor = (graph: UOp, shape: number[]): Tensor => {
     if (backend !== "webgpu") throw new Error(`backend ${backend} not implemented`);
     const kg = kernelize(self.uop);
     const lg = lowerer(kg);
+    if (DEBUG.get()){
+      console.log(uop.fmt(kg))
+      console.log(uop.fmt(lg))
+    }
     if (lg.op !== "KERNEL") throw new Error("expected KERNEL root after kernelize/lowerer");
     const sched = linearize(lg);
     if (sched.length === 0) throw new Error("linearize returned no kernels");
@@ -179,7 +183,7 @@ const mkTensor = (graph: UOp, shape: number[]): Tensor => {
     })
 
     let st = performance.now()
-    kernels.forEach(k=>k.launch())
+    for (const k of kernels) await k.launch()
     if (DEBUG.get()) console.log(`execution duration: ${(performance.now()- st)/1e3}s`)
     out = outputBufferIn(sched[sched.length-1].steps);
     if (!out) throw new Error("no output buffer found");

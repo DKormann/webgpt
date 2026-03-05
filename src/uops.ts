@@ -172,6 +172,48 @@ export const uop
     }
 
     return canon(u)
+  },
+
+  hash: (u: UOp, _opts: { allowBuffers?: boolean } = {}): string => {
+    const memo = new Map<UOp, string>()
+
+    const stable = (v: unknown): string => {
+      if (v === null || typeof v !== "object") return JSON.stringify(v)
+      if (Array.isArray(v)) return `[${v.map(stable).join(",")}]`
+      const obj = v as Record<string, unknown>
+      const keys = Object.keys(obj).sort()
+      return `{${keys.map((k) => `${JSON.stringify(k)}:${stable(obj[k])}`).join(",")}}`
+    }
+
+    const fnv1a = (s: string): string => {
+      let h = 0x811c9dc5
+      for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i)
+        h = Math.imul(h, 0x01000193)
+      }
+      return (h >>> 0).toString(16).padStart(8, "0")
+    }
+
+    const go = (x: UOp): string => {
+      const hit = memo.get(x)
+      if (hit) return hit
+
+      if (x.op === "BUFFER") {
+        const out = fnv1a(`BUFFER|size:${x.buf.size}`)
+        memo.set(x, out)
+        return out
+      }
+
+      const args = Object.fromEntries(
+        Object.entries(x).filter(([k]) => k !== "srcs" && k !== "op")
+      )
+      const srcHashes = x.srcs.map(go)
+      const out = fnv1a(`${x.op}|${stable(args)}|[${srcHashes.join(",")}]`)
+      memo.set(x, out)
+      return out
+    }
+
+    return go(u)
   }
 
 
