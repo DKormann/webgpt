@@ -26,6 +26,12 @@ export const uop
     srcs:[]
   }),
 
+  defReg : (v:number):UOp => ({
+    op: "DEFINE_REG",
+    srcs:[],
+    default:v
+  }),
+
   rand : (seed: number, size?: number):UOp => ({op:"RAND", seed, srcs:[], size}),
 
   view: (src: UOp, views: View[]): UOp & { op: "VIEW" } => ({
@@ -49,6 +55,8 @@ export const uop
       index ? uop.index(dest, index) : dest
     ]
   }),
+
+  noop: (src:UOp): UOp =>({op:"NOOP", srcs:[src]}),
   index: (buf: UOp, index: UOp): UOp => ({op:"INDEX", srcs:[buf,index]}),
 
   fmt: (u:UOp) : string => {

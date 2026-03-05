@@ -1,45 +1,112 @@
-import type { BUFFER, RAWBUFFER, UOp, UOpKind } from "./types";
+import { partition } from "./helpers";
+import { PatternMatcher, UPat } from "./patter_matcher";
+import { UOp, UOpKind } from "./types";
 import { uop } from "./uops";
 
+type KernelUOp = UOpKind<"KERNEL">;
 
-type KernelUOp = UOp & { op: "KERNEL" };
+export class ScheduleItem{
+  steps : UOp[]
 
-export type Linearized = {
-  kernels: KernelUOp[];
-  buffers: RAWBUFFER[];
-  output: RAWBUFFER;
-};
+  constructor(kernel: UOp){
+    kernel = uop.dedup(kernel)
+    let uops = uop.topo(kernel);
+    const replace = (a:UOp, b:UOp) => {
+      uops = uops.map(x=>x==a?b:x)
+      uops.forEach(u=>u.srcs = u.srcs.map(x=>x==a?b:x))
+    }
 
-export const linearize = (root: KernelUOp): UOpKind<"PROGRAM"> => {
+    let reducer;
+    let store: UOp;
+    {
+      let stores = uops.filter(x=>x.op == "STORE");
+      if (stores.length != 1) throw new Error("expected exactly one STORE in kernel");
+      store = stores[0];
+      let reducers = uops.filter(x=>x.op == "REDUCE")
+      if (reducers.length > 1) throw new Error("expected only one REDUCE in kernel");
+      reducer = reducers[0]
+    }
+
+    if (!reducer){
+      let ranges = uops.filter(x=>x.op == "RANGE");
+      ranges.forEach(r=>r.op = "SPECIAL")
+
+      this.steps = [
+        ...ranges,
+        ...uops.filter(x=>!ranges.includes(x)),
+      ]
+    }else{
+
+      let defreg:UOp = uop.defReg(reducer.bin == "ADD" ? 0 : 1)
+      let accreg:UOp = {op:reducer.bin, srcs: [defreg, reducer.srcs[0]]}
+      let usereg:UOp = uop.noop(accreg)
+      replace(reducer, usereg)
+
+      let ranges = uops.filter(x=>x.op == "RANGE") as UOpKind<"SPECIAL"|"RANGE">[];
+      let specials = ranges.filter(r=>reducer.keep.includes(r.id));
+      let loops = ranges.filter(r=>!specials.includes(r))
+      specials.forEach(s=>s.op="SPECIAL")
+  
+      let loopbody = new Set<UOp> ([...loops]);
+      let loopafter = new Set<UOp> ([usereg]);
+
+      uops.forEach(u=>{
+        if (u.op == "RANGE") return
+        if (u.srcs.some(x=>loopafter.has(x))) loopafter.add(u)
+        else if (u.srcs.some(x=>loopbody.has(x))) loopbody.add(u)
+      })
+
+      this.steps = [
+        ...specials,
+        defreg,
+        ...uops.filter(x=> x.op != "SPECIAL" && !loopbody.has(x) && !loopafter.has(x)),
+        ...uops.filter(x=>loopbody.has(x)),
+        accreg,
+        ...loops.reverse().map(l=>uop.endrange(l as UOpKind<"RANGE">)),
+        ...loopafter
+      ]
+    }  
+
+  }
+  toString(){
+
+    return "SCHEDULEITEM\n"+ this.steps.map((u,i)=>`${String(i).padStart(4)}: ${u.op.padEnd(10)}: ${u.srcs.map(x=>this.steps.indexOf(x)).join(", ").padEnd(10)}:`+
+    ` ${
+      Object.entries(u).map(([k,v])=>(k!="op" && k !="srcs" ? `${k}:${this.steps.includes(v) ? this.steps.indexOf(v) : JSON.stringify(v)}`: ''))
+      .filter(x=>x)
+      .join(" ")
+    }`).join("\n")
+  }
+}
+
+
+export const linearize = (root: KernelUOp): ScheduleItem[]=> {
   const topo = uop.topo(root);
   let kernels = topo.filter((x): x is KernelUOp => x.op === "KERNEL");
   if (kernels.length === 0) throw new Error("linearize expected at least one KERNEL");
 
-  let getbuffer =(K:KernelUOp)=>{
-    let st = K.srcs[0]
-
-    if (st.op == "STORE"){
-      let idx = st.srcs[1]
-      if (idx.op == "INDEX") {
-        let buf = idx.srcs[0]
-        if (buf.op == "BUFFER") return buf as BUFFER 
-      }
+  const getbuffer = (k: KernelUOp) => {
+    const st = k.srcs[0];
+    if (st.op === "STORE") {
+      const idx = st.srcs[1];
+      if (idx.op === "INDEX" && idx.srcs[0].op === "BUFFER") return idx.srcs[0];
     }
-    throw new Error("MALFORMD KERNEL" + uop.fmt(K))
-  }
+    throw new Error("MALFORMD KERNEL " + uop.fmt(k));
+  };
 
-  kernels = kernels.map(x=>{
-    let go = ((u:UOp):UOp=>{
-      if (u.op == "KERNEL") return getbuffer(u)
-      return {...u,srcs: u.srcs.map(go)} as UOp
-    });
-    return {...x,srcs: x.srcs.map(go)} as KernelUOp
+  kernels = kernels.map((k) => {
+    const replace = (u: UOp): UOp => {
+      if (u.op === "KERNEL") return getbuffer(u);
+      return { ...u, srcs: u.srcs.map(replace) } as UOp;
+    };
+
+    const st = replace(k.srcs[0]);
+    if (st.op !== "STORE") throw new Error("kernel body must be STORE after lowering");
+
+    return {...k, srcs:[st]}
+  });
+
+  return kernels.map(k=>{
+    return new ScheduleItem(uop.dedup(k))
   })
-
-  return uop.dedup({
-    op:"PROGRAM",
-    srcs:kernels,
-    out: getbuffer(root).buf
-  }) as UOpKind<"PROGRAM">
-
 };

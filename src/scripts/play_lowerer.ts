@@ -5,6 +5,8 @@ import { kernelize } from "../kernelize"
 import { uop } from "../uops"
 import { linearize } from "../linearize"
 import { UOp } from "../types"
+import { WEBGPU } from "../webgpu"
+import { DEBUG } from "../debug"
 
 
 let log = (x:UOp)=>console.log(uop.fmt(x))
@@ -27,7 +29,9 @@ log(l)
 
 let li = linearize(l)
 
-log(li)
+li.map(x=>console.log(x.toString()))
+
+
+
 
 // console.log(uop.fmt(l))
-

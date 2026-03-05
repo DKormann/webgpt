@@ -34,7 +34,7 @@ export const lowerer = (graph: UOpKind<"KERNEL">): UOpKind<"KERNEL"> =>{
         op: "REDUCE",
         srcs: [c],
         bin,
-        keep,
+        keep:keep.map(k=>k.id),
       } , keep]
     }
 

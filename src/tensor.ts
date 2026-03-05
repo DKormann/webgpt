@@ -51,6 +51,20 @@ const normalizeAxes = (axes: number[] | undefined, rank: number): number[] => {
   return [...new Set(norm)].sort((a, b) => b - a);
 };
 
+const buffersIn = (graph: UOp[]): (UOp & { op: "BUFFER" })[] => {
+  const out: (UOp & { op: "BUFFER" })[] = [];
+  const seen = new Set<UOp>();
+  const walk = (u: UOp) => {
+    if (u.op === "BUFFER" && !seen.has(u)) {
+      seen.add(u);
+      out.push(u);
+    }
+    u.srcs.forEach(walk);
+  };
+  graph.forEach(walk);
+  return out;
+};
+
 const binary = (self: Tensor, op: BinOp) => (other: Tensor) => {
   if (JSON.stringify(self.shape) !== JSON.stringify(other.shape)) throw new Error("shape mismatch");
   return mkTensor({ op, srcs: [self.uop, other.uop] }, self.shape.slice());
@@ -141,13 +155,17 @@ const mkTensor = (graph: UOp, shape: number[]): Tensor => {
     const kg = kernelize(self.uop);
     const lg = lowerer(kg);
     if (lg.op !== "KERNEL") throw new Error("expected KERNEL root after kernelize/lowerer");
-    const lin = linearize(lg);
-    if (DEBUG.get()) lin.srcs.forEach((k) => console.log(uop.fmt(k)));
+    const prog = linearize(lg);
+    if (prog.op !== "PROGRAM") throw new Error("linearize must return PROGRAM");
+    if (DEBUG.get()) prog.srcs.forEach((k) => console.log(uop.fmt(k)));
 
-    for (const lk of lin.srcs) {
-      
+    for (const lk of prog.srcs) {
+      if (lk.op !== "KERNEL") continue;
+      const bufs = buffersIn(lk.srcs).map((b) => b.buf);
+      const k = WEBGPU.createKernel(lk.srcs, bufs as Parameters<typeof WEBGPU.createKernel>[1]);
+      await k.launch();
     }
-    return lin.output.read();
+    return prog.out.read();
   };
 
   return self;

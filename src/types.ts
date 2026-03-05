@@ -33,13 +33,16 @@ export type UOp = {
     UOp // destination
   ]
 } | BUFFER | {
-  op: "RANGE"
+  op: "RANGE" | "SPECIAL"
   srcs: [],
   id: number,
   max: number
 } | {
   op: "ENDRANGE",
   srcs: [UOp & {op: "RANGE"}]
+} | {
+  op: "NOOP",
+  srcs: [UOp]
 } | {
   op: "INDEX",
   srcs: [UOp, UOp]
@@ -52,7 +55,7 @@ export type UOp = {
   op: "REDUCE",
   bin: BinOp,
   srcs: [UOp],
-  keep: UOpKind<"RANGE">[]
+  keep: number[]
 } | {
   op: BinOp
   srcs: [UOp, UOp]
@@ -80,6 +83,7 @@ export type UOp = {
 } | {
   op: "DEFINE_REG"
   srcs:[]
+  default: number
 } | {
   op: "KERNEL",
   size:number,
