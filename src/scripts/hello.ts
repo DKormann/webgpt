@@ -6,13 +6,39 @@ type I <T> = (x:T) => {data:number}
 
 type B <A, B> = (a:I<A> , b:I<B>) => I<A&B>
 
-
-
 const x : I<{e:number}> = ({e}) => ({data:e})
-
 const add : B<{e:number}, {f:number}> = (a,b)=> (k)=> ({data: a(k).data + b(k).data})
 
-const apply = <T> (t:I<T>, k:string, val: number) : I<Omit<T,k>> => (t,k,val)=> ({data: t(k)
 
-type D =  Omit<{e: number, f:number}, "e">
+type Graph = {
+  name: string
+  input: (name:string) => Graph
+  add: (a:Graph, b: Graph) => Graph
+  execute: (args?: {[key:string]:Graph})=>number[]
+  mk:(fn:(...x:Graph[])=>Graph) => Graph
+}
+
+
+const Graph : Graph  = {
+  name: "Graph",
+  input: (name:string) => ({...Graph, name}),
+  add: (a:Graph,b:Graph) => ({...Graph,name: "add"}),
+  execute: () => [],
+  mk: fn => 
+
+}
+
+
+
+
+
+const adder = Graph.add(
+  Graph.input("a"),
+  Graph.input("b"),
+)
+
+
+const res = adder.execute({
+  a:[1,2,3],
+})
 

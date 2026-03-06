@@ -1,4 +1,4 @@
-import type { BinOp, UOp, UOpKind } from "./types";
+import type { BinOp, RAWBUFFER, UOp, UOpKind } from "./types";
 import { uop } from "./uops";
 import { kernelize } from "./kernelize";
 import { linearize } from "./linearize";
@@ -10,8 +10,11 @@ import { numel, stridesFor } from "./helpers";
 export type Raw = number | Raw[];
 export type RuntimeName = "js" | "webgpu";
 
+
 export type Tensor = {
   uop: UOp;
+  realized?:RAWBUFFER;
+  raw(): Promise<Raw>
   shape: number[];
   numel: () => number;
   mul: (other: Tensor) => Tensor;
@@ -23,7 +26,7 @@ export type Tensor = {
   expand: (dims: number[]) => Tensor;
   pad: (pads: [number, number][]) => Tensor;
   shrink: (cuts: [number, number][]) => Tensor;
-  run: (_backend?: RuntimeName) => Promise<Raw>;
+  run: (_backend?: RuntimeName) => Promise<void>;
 };
 
 export const BACKEND: { default: RuntimeName } = { default: "webgpu" };
@@ -163,16 +166,14 @@ const mkTensor = (graph: UOp, shape: number[]): Tensor => {
     if (backend !== "webgpu") throw new Error(`backend ${backend} not implemented`);
     const kg = kernelize(self.uop);
     const lg = lowerer(kg);
-    if (DEBUG.get()){
-      console.log(uop.fmt(kg))
-      console.log(uop.fmt(lg))
-    }
     if (lg.op !== "KERNEL") throw new Error("expected KERNEL root after kernelize/lowerer");
     const sched = linearize(lg);
     if (sched.length === 0) throw new Error("linearize returned no kernels");
-
-    if (DEBUG.get()) sched.forEach(s=>console.log(s.toString()))
-
+    if (DEBUG.get()){
+      console.log(uop.fmt(kg))
+      console.log(uop.fmt(lg))
+      sched.forEach(s=>console.log(s.toString()))
+    }
 
     let out: ReturnType<typeof bufferRefsIn>[number] | null = null;
     const refs = sched.flatMap((s) => bufferRefsIn(s.steps));
@@ -186,8 +187,15 @@ const mkTensor = (graph: UOp, shape: number[]): Tensor => {
     if (DEBUG.get()) console.log(`execution duration: ${(performance.now()- st)/1e3}s`)
     out = outputBufferIn(sched[sched.length-1].steps);
     if (!out) throw new Error("no output buffer found");
-    return bindings[out.slot]!.read();
+    self.realized = bindings[out.slot]!
   };
+
+  self.raw = async() => {
+    if (!self.realized){
+      await self.run();
+    }
+    return self.realized!.read()
+  }
   return self;
 };
 

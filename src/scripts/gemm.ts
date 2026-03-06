@@ -4,7 +4,7 @@ import { Tensor } from "../tensor";
 
 DEBUG.set(1)
 
-const N = 250
+const N = 1000
 
 const a = Tensor.rand([N, N])
 const b = Tensor.rand([N, N])
