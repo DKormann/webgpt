@@ -48,9 +48,8 @@ li.map(x=>console.log(x.toString()))
 
 console.log("\nWGSL:")
 li.forEach((s, i) => {
-  const bufs = buffersIn(s.steps).map((b) => b.buf) as Parameters<typeof WEBGPU.createKernel>[1];
   console.log(`\n-- kernel ${i} --`);
-  WEBGPU.createKernel(s.steps, bufs);
+  WEBGPU.createRunner(s.steps);
 })
 
 

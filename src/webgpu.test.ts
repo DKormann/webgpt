@@ -25,15 +25,14 @@ describe("low level webgpu test",()=>{
 
   test("buffer store",async ()=>{
     let buf = Device.createBuffer(10)
-    let kernel = Device.createKernel(
+    let kernel = Device.createRunner(
       [uop.store(
         uop.const (22),
-        uop.index(uop.buffer(buf), uop.const(0))
-      ) as LowGraph],
-      [buf]
+        uop.index(uop.buffer(0, buf.size), uop.const(0))
+      ) as LowGraph]
     )
 
-    await kernel.launch()
+    await kernel.run([buf])
     expect((await buf.read()).slice(0,1)).toEqual([22])
 
   })
@@ -41,18 +40,16 @@ describe("low level webgpu test",()=>{
   test("kernel: range",async ()=>{
     let buffer = Device.createBuffer(10)
 
-    let buf = uop.buffer(buffer)
+    let buf = uop.buffer(0, buffer.size)
     let range = uop.range(10)
 
-    let kernel = Device.createKernel([
+    let kernel = Device.createRunner([
       range,
       uop.store( range, uop.index(buf, range)),
       uop.endrange(range),
-    ],
-      [buffer]
-    )
+    ])
 
-    await kernel.launch()
+    await kernel.run([buffer])
     expect((await buffer.read())).toEqual([0,1,2,3,4,5,6,7,8,9])
 
   })
@@ -62,35 +59,35 @@ describe("low level webgpu test",()=>{
   test("kernel: range sum ",async ()=>{
     let buffer = Device.createBuffer(1)
 
-    let buf = uop.buffer(buffer)
+    let buf = uop.buffer(0, buffer.size)
     let range = uop.range(10)
 
 
-    let kernel = Device.createKernel([
+    let kernel = Device.createRunner([
       uop.store( uop.const(0), uop.index(buf, uop.const(0))),
       range,
       uop.store( uop.add(uop.index(buf, uop.const(0)), range), uop.index(buf, uop.const(0))),
       uop.endrange(range),
-    ], [buffer])
+    ])
 
-    await kernel.launch()
+    await kernel.run([buffer])
     expect((await buffer.read())).toEqual([45])
 
   })
 
   test("kernel: range rand", async () => {
     const buffer = Device.createBuffer(4)
-    const buf = uop.buffer(buffer)
+    const buf = uop.buffer(0, buffer.size)
     const range = uop.range(4)
     const seed = 7
 
-    const kernel = Device.createKernel([
+    const kernel = Device.createRunner([
       range,
       uop.store(uop.index({ op: "RAND", srcs: [], seed }, range), uop.index(buf, range)),
       uop.endrange(range),
-    ], [buffer])
+    ])
 
-    await kernel.launch()
+    await kernel.run([buffer])
     const out = await buffer.read()
     const expected = [0, 1, 2, 3].map((i) => jsRand((seed ^ i) >>> 0))
     for (let i = 0; i < out.length; i++) expect(out[i]).toBeCloseTo(expected[i], 6)

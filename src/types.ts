@@ -6,7 +6,8 @@ export type MoveOp = "RESHAPE" | "EXPAND" | "PERMUTE" | "PAD" | "SHRINK"
 export type BUFFER = {
   op: "BUFFER"
   srcs: [],
-  buf: RAWBUFFER
+  slot: number,
+  size: number
 }
 
 
@@ -95,7 +96,7 @@ export type UOp = {
   op: "KERNEL",
   size:number,
   srcs: UOp[],
-  buffers: (UOp & { op: "BUFFER" })[],
+  buffers: number[],
 } | {
   op: "PROGRAM",
   srcs: UOp[]
@@ -133,13 +134,11 @@ export type BACKEND <B extends RAWBUFFER> = {
   max_blocks: [number, number, number]
   max_threads: [number, number, number]
   createBuffer : (size: number) => B
-  createKernel : (graph: UOp[], buffers: B[]) => Kernel
+  createRunner : (graph: UOp[]) => Runner
 }
 
-export type Kernel = {
-  graph: UOp[]
-  buffers: RAWBUFFER[]
-  launch: () => Promise<void>
+export type Runner = {
+  run: (buffers: RAWBUFFER[]) => Promise<void>
 }
 
 

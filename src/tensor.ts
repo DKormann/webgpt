@@ -50,7 +50,7 @@ const normalizeAxes = (axes: number[] | undefined, rank: number): number[] => {
   return [...new Set(norm)].sort((a, b) => b - a);
 };
 
-const buffersIn = (graph: UOp[]): (UOp & { op: "BUFFER" })[] => {
+const bufferRefsIn = (graph: UOp[]): (UOp & { op: "BUFFER" })[] => {
   const out: (UOp & { op: "BUFFER" })[] = [];
   const seen = new Set<UOp>();
   const walk = (u: UOp) => {
@@ -174,20 +174,19 @@ const mkTensor = (graph: UOp, shape: number[]): Tensor => {
     if (DEBUG.get()) sched.forEach(s=>console.log(s.toString()))
 
 
-    let out: ReturnType<typeof buffersIn>[number] | null = null;
+    let out: ReturnType<typeof bufferRefsIn>[number] | null = null;
+    const refs = sched.flatMap((s) => bufferRefsIn(s.steps));
+    const bindings: Parameters<ReturnType<typeof WEBGPU.createRunner>["run"]>[0] = [];
+    for (const r of refs) if (!bindings[r.slot]) bindings[r.slot] = WEBGPU.createBuffer(r.size);
 
-    let kernels = sched.map(s=>{
-      const graph = s.steps;
-      const bufs = buffersIn(graph).map((b) => b.buf);
-      return WEBGPU.createKernel(graph, bufs as Parameters<typeof WEBGPU.createKernel>[1]);
-    })
+    const kernels = sched.map((s) => WEBGPU.createRunner(s.steps))
 
     let st = performance.now()
-    for (const k of kernels) await k.launch()
+    for (const k of kernels) await k.run(bindings)
     if (DEBUG.get()) console.log(`execution duration: ${(performance.now()- st)/1e3}s`)
     out = outputBufferIn(sched[sched.length-1].steps);
     if (!out) throw new Error("no output buffer found");
-    return out.buf.read();
+    return bindings[out.slot]!.read();
   };
   return self;
 };

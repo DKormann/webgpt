@@ -1,7 +1,6 @@
 import { stridesFor } from "./helpers";
-import type { Kernel, UOp, UOpKind, View } from "./types";
+import type { UOp, UOpKind, View } from "./types";
 import { uop } from "./uops";
-import { WEBGPU } from "./webgpu";
 
 type Range = UOpKind<"RANGE">
 
@@ -24,6 +23,8 @@ const indexView = (v: View[], buf: UOp, rngs:Range[]) : UOp =>{
 }
 
 export const lowerer = (graph: UOpKind<"KERNEL">): UOpKind<"KERNEL"> =>{
+  const usedSlots = uop.topo(graph).filter((u): u is UOp & { op: "BUFFER" } => u.op === "BUFFER").map((b) => b.slot)
+  let nextSlot = (usedSlots.length ? Math.max(...usedSlots) : -1) + 1
 
   let rangify = (u:UOp, rngs: Range[] | null = null) : [UOp, Range[]] =>{
     if (u.op == "REDUCE_AXIS"){
@@ -47,7 +48,7 @@ export const lowerer = (graph: UOpKind<"KERNEL">): UOpKind<"KERNEL"> =>{
     }
 
     if (u.op =="BUFFER" || u.op =="RAND"){
-      let size = u.op == "BUFFER" ? u.buf.size : u.size ?? 0;
+      let size = u.op == "BUFFER" ? u.size : u.size ?? 0;
       if (rngs == null) rngs = [uop.range(size)]
       if (rngs.length > 1 || rngs[0].max != size) throw new Error("wrong ranges")
       return [uop.index(u, rngs[0]), rngs]
@@ -68,11 +69,8 @@ export const lowerer = (graph: UOpKind<"KERNEL">): UOpKind<"KERNEL"> =>{
 
       let [k,rs] = rangify(c)
 
-      let buf = WEBGPU.createBuffer(u.size)
-
-      
       let dims = rs.map(r=>r.max)
-      let st = uop.store(k, indexView([{dims, "strides": stridesFor(dims)}], uop.buffer(buf), rs))
+      let st = uop.store(k, indexView([{dims, "strides": stridesFor(dims)}], uop.buffer(nextSlot++, u.size), rs))
 
       u = {...u, srcs:[st]}
     }

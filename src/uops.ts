@@ -1,4 +1,4 @@
-import type { BinOp, RAWBUFFER, UOp, View } from "./types";
+import type { BinOp, UOp, View } from "./types";
 
 let _nextRangeId = 1;
 
@@ -10,10 +10,11 @@ export const uop
   add: (a:UOp, b:UOp):UOp=> ({op: "ADD", srcs:[a,b]}),
   mul: (a:UOp, b:UOp):UOp=> ({op: "MUL", srcs:[a,b]}),
 
-  buffer : (buf: RAWBUFFER):UOp & {op:"BUFFER"}=> ({
+  buffer : (slot: number, size: number):UOp & {op:"BUFFER"}=> ({
     op:"BUFFER",
     srcs:[],
-    buf,
+    slot,
+    size,
   }),
 
 
@@ -122,18 +123,11 @@ export const uop
     const memo = new Map<UOp, UOp>()
     const pool = new Map<string, UOp>()
     const ids = new Map<UOp, number>()
-    const objIds = new WeakMap<object, number>()
     let nextId = 0
-    let nextObjId = 0
 
     const getId = (x: UOp): number => {
       if (!ids.has(x)) ids.set(x, nextId++)
       return ids.get(x)!
-    }
-
-    const getObjId = (x: object): number => {
-      if (!objIds.has(x)) objIds.set(x, nextObjId++)
-      return objIds.get(x)!
     }
 
     const canon = (x: UOp): UOp => {
@@ -145,19 +139,11 @@ export const uop
         Object.entries(x).filter(([k]) => k !== "srcs")
       )
 
-      const key = JSON.stringify(
-        x.op === "BUFFER"
-          ? {
-              op: x.op,
-              args: { ...args, buf: { __rawbuf_id: getObjId((x as UOp & { op: "BUFFER" }).buf as object) } },
-              srcs: srcs.map(getId),
-            }
-          : {
-              op: x.op,
-              args,
-              srcs: srcs.map(getId),
-            }
-      )
+      const key = JSON.stringify({
+        op: x.op,
+        args,
+        srcs: srcs.map(getId),
+      })
 
       const pooled = pool.get(key)
       if (pooled) {
@@ -199,7 +185,7 @@ export const uop
       if (hit) return hit
 
       if (x.op === "BUFFER") {
-        const out = fnv1a(`BUFFER|size:${x.buf.size}`)
+        const out = fnv1a(`BUFFER|slot:${x.slot}|size:${x.size}`)
         memo.set(x, out)
         return out
       }
