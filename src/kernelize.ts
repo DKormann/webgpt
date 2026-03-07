@@ -1,5 +1,6 @@
+
 import { PatternMatcher, UPat } from "./patter_matcher";
-import type { UOp, UOpKind } from "./types";
+import { Kernel, mkUop, type UOp, type UOpKind } from "./types";
 import { uop } from "./uops";
 
 
@@ -7,13 +8,13 @@ import { uop } from "./uops";
 export const findSize = (g:UOp):number=>{
   if ("size" in g) return g.size as number
   if (g.op == "CONST") return g.val.length
-  if (g.op == "BUFFER") return g.size
   if (g.srcs.length == 0) throw new Error("cannot find size" + uop.fmt(g))
   return findSize(g.srcs[0] as UOp)
 }
 
 
-export const mkKernel = (g:UOp):UOp =>( {op:"KERNEL", size:findSize(g), srcs: [g], buffers: []})
+
+export const mkKernel = (g:UOp):UOp => mkUop("KERNEL", [g], {size:findSize(g)})
 
 
 let pm = new PatternMatcher([

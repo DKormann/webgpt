@@ -2,15 +2,6 @@
 export type BinOp = "ADD" | "MUL"
 export type MoveOp = "RESHAPE" | "EXPAND" | "PERMUTE" | "PAD" | "SHRINK"
 
-
-export type BUFFER = {
-  op: "BUFFER"
-  srcs: [],
-  slot: number,
-  size: number
-}
-
-
 export type View = {
   dims: number[],
   strides: number[]
@@ -23,6 +14,22 @@ export type TensorShape = {
   offset?: number;
   mask?: [number, number][];
 }
+
+export type Tagged <Tag extends string, SRC extends UOp[], Arg> = {
+  op: Tag,
+  srcs: SRC
+  arg: Arg
+}
+
+export type BufferRef = Tagged<"BUFFER", [], {size:number, slot:number}>
+export type Linear = Tagged<"LINEAR", UOp[], undefined>
+export type Programm = Tagged<"PROGRAMM", Linear[], undefined>
+export type Kernel = Tagged<"KERNEL", [UOp], {size:number}>
+
+
+type highUOP = BufferRef | Linear | Programm | Kernel
+
+export const mkUop = <OP extends highUOP['op'] > (op:OP, srcs: ((highUOP & {op:OP})['srcs']), arg?:(highUOP & {op:OP})['arg'])  => ({op, srcs, arg})  as (highUOP & {op:OP})
 
 export type UOpKind <OP extends UOp["op"]> = UOp & {op: OP}
 
@@ -40,7 +47,7 @@ export type UOp = {
   extent: number,
   block: number,
   thread: number,
-} | BUFFER | {
+} |highUOP| {
   op: "RANGE"
   srcs: [],
   id: number,
@@ -92,20 +99,7 @@ export type UOp = {
   op: "DEFINE_REG"
   srcs:[]
   default: number
-} | {
-  op: "KERNEL",
-  size:number,
-  srcs: UOp[],
-  buffers: number[],
-} | {
-  op: "PROGRAM",
-  srcs: UOp[]
-  out: RAWBUFFER
 }
-
-export type HighGraph = UOp & { op: "CONST" | "BUFFER" | BinOp | "REDUCE_AXIS" | MoveOp }
-
-export type LowGraph = UOp & { op: "CONST" | "RAND" | "BUFFER" | BinOp | "REDUCE_AXIS" | "RANGE" | "ENDRANGE" | "INDEX" | "STORE" | "DEFINE_REG" } & {srcs: LowGraph[]}
 
 
 
@@ -121,27 +115,16 @@ export type ShapeTracker = {
   mask: [number, number][],
 }
 
-export type Schedule = {
-  items: {
-    Buffers: RAWBUFFER[]
-    roots: (UOp & {op:"STORE"})[]
-  }[]
-}
+export type Runner = (getbuffer: (r:BufferRef)=> RAWBUFFER) => Promise<void>
 
 export type RAWBUFFER = {size: number, read: ()=>Promise<number[]>}
 
-export type BACKEND <B extends RAWBUFFER> = {
+export type Backend <B extends RAWBUFFER> = {
   max_blocks: [number, number, number]
   max_threads: [number, number, number]
   createBuffer : (size: number) => B
-  createRunner : (graph: UOp[]) => Runner
+  createRunner : (sched: Programm) => Promise<Runner>
 }
-
-export type Runner = {
-  run: (buffers: RAWBUFFER[]) => Promise<void>
-}
-
-
 export type Tensor = {
   realized?: RAWBUFFER
 }

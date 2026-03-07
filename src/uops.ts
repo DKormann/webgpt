@@ -2,21 +2,12 @@ import type { BinOp, UOp, View } from "./types";
 
 let _nextRangeId = 1;
 
+let bin =  (op:BinOp) => (a:UOp, b:UOp):UOp => ({op, srcs: [a,b]})
 
 export const uop
 // : Record <string, (...args: any[]) => UOp>
 = {
-
-  add: (a:UOp, b:UOp):UOp=> ({op: "ADD", srcs:[a,b]}),
-  mul: (a:UOp, b:UOp):UOp=> ({op: "MUL", srcs:[a,b]}),
-
-  buffer : (slot: number, size: number):UOp & {op:"BUFFER"}=> ({
-    op:"BUFFER",
-    srcs:[],
-    slot,
-    size,
-  }),
-
+  bin, add: bin("ADD"), mul: bin("MUL"),
 
   range : (max:number):UOp & {op:"RANGE"} => ({op:"RANGE", srcs:[], id:_nextRangeId++, max}),
   endrange : (range: UOp & {op: "RANGE"}) : UOp & {op:"ENDRANGE"} => ({op:"ENDRANGE", srcs:[range]}),
@@ -41,7 +32,7 @@ export const uop
     views
   }),
 
-  reduce: (src: UOp, axis: number[], bin: BinOp): UOp & { op: "REDUCE_AXIS" } => ({
+  reduce: (src: UOp, bin: BinOp, axis: number[]): UOp & { op: "REDUCE_AXIS" } => ({
     op: "REDUCE_AXIS",
     srcs: [src],
     axis,
@@ -185,7 +176,7 @@ export const uop
       if (hit) return hit
 
       if (x.op === "BUFFER") {
-        const out = fnv1a(`BUFFER|slot:${x.slot}|size:${x.size}`)
+        const out = fnv1a(`BUFFER|slot:${x.arg.slot}|size:${x.arg.size}`)
         memo.set(x, out)
         return out
       }

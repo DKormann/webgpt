@@ -24,7 +24,7 @@ const Graph : Graph  = {
   input: (name:string) => ({...Graph, name}),
   add: (a:Graph,b:Graph) => ({...Graph,name: "add"}),
   execute: () => [],
-  mk: fn => 
+  mk: fn => ({...Graph, ok:2})
 
 }
 
@@ -32,13 +32,5 @@ const Graph : Graph  = {
 
 
 
-const adder = Graph.add(
-  Graph.input("a"),
-  Graph.input("b"),
-)
 
-
-const res = adder.execute({
-  a:[1,2,3],
-})
-
+Graph.mk(x=>Graph)

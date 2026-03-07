@@ -1,5 +1,5 @@
 import { stridesFor } from "./helpers";
-import type { UOp, UOpKind, View } from "./types";
+import type { BufferRef, Kernel, UOp, UOpKind, View } from "./types";
 import { uop } from "./uops";
 
 type Range = UOpKind<"RANGE">
@@ -19,13 +19,9 @@ const indexView = (v: View[], buf: UOp, rngs:Range[]) : UOp =>{
   }
 
   return uop.index(buf, idx);
-
 }
 
-export const lowerer = (graph: UOpKind<"KERNEL">): UOpKind<"KERNEL"> =>{
-  const usedSlots = uop.topo(graph).filter((u): u is UOp & { op: "BUFFER" } => u.op === "BUFFER").map((b) => b.slot)
-  let nextSlot = (usedSlots.length ? Math.max(...usedSlots) : -1) + 1
-
+export const lowerer = (graph: Kernel, mkBuffer: (size: number) => BufferRef): UOpKind<"KERNEL"> =>{
   let rangify = (u:UOp, rngs: Range[] | null = null) : [UOp, Range[]] =>{
     if (u.op == "REDUCE_AXIS"){
       let {axis, srcs: [ch], bin} = u;
@@ -48,7 +44,7 @@ export const lowerer = (graph: UOpKind<"KERNEL">): UOpKind<"KERNEL"> =>{
     }
 
     if (u.op =="BUFFER" || u.op =="RAND"){
-      let size = u.op == "BUFFER" ? u.size : u.size ?? 0;
+      let size = u.op == "BUFFER" ? u.arg.size : u.size ?? 0;
       if (rngs == null) rngs = [uop.range(size)]
       if (rngs.length > 1 || rngs[0].max != size) throw new Error("wrong ranges")
       return [uop.index(u, rngs[0]), rngs]
@@ -66,12 +62,9 @@ export const lowerer = (graph: UOpKind<"KERNEL">): UOpKind<"KERNEL"> =>{
   let go = (u:UOp):UOp => {
     if (u.op == "KERNEL"){
       let {srcs:[c]} = u;
-
       let [k,rs] = rangify(c)
-
       let dims = rs.map(r=>r.max)
-      let st = uop.store(k, indexView([{dims, "strides": stridesFor(dims)}], uop.buffer(nextSlot++, u.size), rs))
-
+      let st = uop.store(k, indexView([{dims, "strides": stridesFor(dims)}], mkBuffer(u.arg.size), rs))
       u = {...u, srcs:[st]}
     }
     return {...u, srcs:u.srcs.map(go)} as UOp

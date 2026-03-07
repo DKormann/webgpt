@@ -1,5 +1,5 @@
-import type { BACKEND, RAWBUFFER, UOp } from "./types";
-import { DEBUG } from "./debug";
+import type { Backend, BufferRef, Linear, Programm, RAWBUFFER, UOp } from "./types";
+
 import { uop } from "./uops";
 
 export type WEBGPUBUFFER = RAWBUFFER;
@@ -7,18 +7,17 @@ type State = { size: number; gpu?: GPUBuffer };
 
 type Compiled = {
   wgsl: string;
-  slots: number[];
+  buffers: BufferRef[],
   randCount: number;
   dispatch: [number, number, number];
-  pipeline?: Promise<GPUComputePipeline>;
+  pipeline: Promise<GPUComputePipeline>;
 };
 
 const states = new WeakMap<WEBGPUBUFFER, State>();
-const cache = new Map<string, Compiled>();
 let gpuP: Promise<GPU> | undefined;
 let devP: Promise<GPUDevice> | undefined;
 
-const getGPU = () =>
+const getGPU = () : Promise<GPU> =>
   (gpuP ??= (async () => {
     let g = (globalThis as { navigator?: Navigator }).navigator?.gpu;
     if (g) return g;
@@ -100,11 +99,13 @@ const bufferNodesOf = (graph: UOp[]): (UOp & { op: "BUFFER" })[] => {
 
 const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
   const graph = bodyOf(graphIn);
-  const slots = Array.from(new Set(bufferNodesOf(graph).map((u) => u.slot))).sort((a, b) => a - b);
-  const bindBySlot = new Map(slots.map((s, i) => [s, i]));
+  // const slots = Array.from(new Set(bufferNodesOf(graph).map((u) => u.slot))).sort((a, b) => a - b);
+  let buffers:BufferRef[] = Array.from(new Set(bufferNodesOf(graph)))
+  const bindBySlot = new Map(buffers.map((s, i) => [s, i]));
+
   const rands = randNodesOf(graph);
   const randIx = new Map(rands.map((r, i) => [r, i]));
-  const seedBinding = slots.length;
+  const seedBinding = buffers.length;
   const names = new Map<UOp, string>();
   const regs = new Map<UOp, string>();
   const ranges: UOp[] = [];
@@ -150,7 +151,7 @@ const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
         return `randf(seeds[${ri}u] ^ ${idx(i)})`;
       }
       if (base.op !== "BUFFER") throw new Error(`unsupported value index base: ${base.op}`);
-      const b = bindBySlot.get(base.slot);
+      const b = bindBySlot.get(base);
       if (b == null) throw new Error("graph references unknown buffer slot");
       return `b${b}[${idx(i)}]`;
     }
@@ -193,7 +194,7 @@ const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
     if (u.op !== "STORE") throw new Error(`unsupported root op: ${u.op}`);
     const [src, dst] = u.srcs;
     if (dst.op !== "INDEX" || dst.srcs[0].op !== "BUFFER") throw new Error("unsupported store dst");
-    const b = bindBySlot.get(dst.srcs[0].slot);
+    const b = bindBySlot.get(dst.srcs[0]);
     if (b == null) throw new Error("graph references unknown buffer slot");
     lines.push(`b${b}[${idx(dst.srcs[1])}] = ${val(src)};`);
   }
@@ -210,11 +211,12 @@ const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
   for (const s0 of specials) dispatch[s0.axis] = Math.max(1, s0.block);
 
   return {
-    slots,
+    buffers,
     randCount: rands.length,
     dispatch,
     wgsl: [
-      ...slots.map((_, i) => `@group(0) @binding(${i}) var<storage, read_write> b${i}: array<f32>;`),
+      // ...slots.map((_, i) => `@group(0) @binding(${i}) var<storage, read_write> b${i}: array<f32>;`),
+      ...buffers.map((_,i)=>`@group(0) @binding(${i}) var<storage, read_write> b${i}: array<f32>;`),
       ...(needRand ? [`@group(0) @binding(${seedBinding}) var<storage, read> seeds: array<u32>;`] : []),
       ...(needRand
         ? [
@@ -236,60 +238,59 @@ const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
   };
 };
 
-export const WEBGPU: BACKEND<WEBGPUBUFFER> = {
-  max_blocks: [65535, 65535, 65535],
-  max_threads: [256, 256, 64],
-  createBuffer,
-  createRunner: (graph: UOp[]) => {
-    const key = JSON.stringify(bodyOf(graph).map((g) => uop.hash(g)));
-    if (!cache.has(key)) cache.set(key, codegen(graph));
-    const compiled = cache.get(key)!;
-    if (DEBUG.get() === 1) console.log(compiled.wgsl);
+const mkKernel = (d:GPUDevice, {srcs:graph}:Linear) =>{
 
-    const run = async (bindings: RAWBUFFER[]) => {
-      const d = await getDevice();
-      const gbufs = await Promise.all(
-        compiled.slots.map((slot) => {
-          const b = bindings[slot] as WEBGPUBUFFER | undefined;
-          if (!b) throw new Error(`missing binding for buffer slot ${slot}`);
-          return ensure(b);
-        })
-      );
+    const compiled = codegen(graph)
 
-      const seedBuf =
-        compiled.randCount > 0
-          ? d.createBuffer({ size: Math.max(4, compiled.randCount * 4), usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST })
-          : null;
-      if (seedBuf) {
-        const rands = randNodesOf(bodyOf(graph));
-        d.queue.writeBuffer(seedBuf, 0, new Uint32Array(rands.map((r) => Math.floor(r.seed) >>> 0)));
-      }
+    const seedBuf =
+      compiled.randCount > 0
+        ? d.createBuffer({ size: Math.max(4, compiled.randCount * 4), usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST })
+        : null;
+    if (seedBuf) {
+      const rands = randNodesOf(bodyOf(graph));
+      d.queue.writeBuffer(seedBuf, 0, new Uint32Array(rands.map((r) => Math.floor(r.seed) >>> 0)));
+    }
 
-      if (!compiled.pipeline) {
-        compiled.pipeline = (async () => {
-          const m = d.createShaderModule({ code: compiled.wgsl });
-          return d.createComputePipeline({ layout: "auto", compute: { module: m, entryPoint: "main" } });
-        })();
-      }
-      const p = await compiled.pipeline;
+    const pipeline = d.createComputePipeline({ layout: "auto", compute: { module: d.createShaderModule({ code: compiled.wgsl }), entryPoint: "main" } });
+    const run = async (getBind: (b:BufferRef) =>GPUBuffer) => {
+
       const bg = d.createBindGroup({
-        layout: p.getBindGroupLayout(0),
+        layout: pipeline.getBindGroupLayout(0),
         entries: [
-          ...gbufs.map((buffer, i) => ({ binding: i, resource: { buffer } })),
-          ...(seedBuf ? [{ binding: compiled.slots.length, resource: { buffer: seedBuf } }] : []),
+          ...compiled.buffers.map((buffer, i) => ({ binding: i, resource: { buffer: getBind(buffer) } })),
+          ...(seedBuf ? [{ binding: compiled.buffers.length, resource: { buffer: seedBuf } }] : []),
         ],
       });
 
       const ce = d.createCommandEncoder();
       const pass = ce.beginComputePass();
-      pass.setPipeline(p);
+      pass.setPipeline(pipeline);
       pass.setBindGroup(0, bg);
       pass.dispatchWorkgroups(compiled.dispatch[0], compiled.dispatch[1], compiled.dispatch[2]);
       pass.end();
       d.queue.submit([ce.finish()]);
       seedBuf?.destroy();
-    };
+    }
 
-    return { graph, run };
+    return run
+
+}
+
+export const WEBGPU: Backend<WEBGPUBUFFER> = {
+  max_blocks: [65535, 65535, 65535],
+  max_threads: [256, 256, 64],
+  createBuffer,
+  createRunner: async (graph: Programm) => {
+
+    let buffers = Array.from(new Set(uop.topo(graph).filter(b=>b.op == "BUFFER")))
+    const d = await getDevice();
+    let kerns = graph.srcs.map(x=>mkKernel(d,x))
+
+    return async (getBind : (ref: BufferRef) => WEBGPUBUFFER) => {
+
+      let gpubuffers = new Map(await Promise.all(buffers.map( async (br)=>[br,  await ensure(getBind(br))] as [BufferRef, GPUBuffer])))
+
+      for (let k of kerns) await k(r=>gpubuffers.get(r)!)
+    };
   },
 };
