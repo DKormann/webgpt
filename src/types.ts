@@ -31,6 +31,9 @@ type highUOP = BufferRef | Linear | Programm | Kernel
 
 export const mkUop = <OP extends highUOP['op'] > (op:OP, srcs: ((highUOP & {op:OP})['srcs']), arg?:(highUOP & {op:OP})['arg'])  => ({op, srcs, arg})  as (highUOP & {op:OP})
 
+let slotcount = 0
+export const mkBuffer = (size:number) => mkUop("BUFFER", [], {size, slot: slotcount ++ })
+
 export type UOpKind <OP extends UOp["op"]> = UOp & {op: OP}
 
 

@@ -1,4 +1,4 @@
-import { Backend, mkUop, Runner, type BinOp, type BufferRef, type RAWBUFFER, type UOp } from "./types";
+import { Backend, mkBuffer, mkUop, Runner, type BinOp, type BufferRef, type RAWBUFFER, type UOp } from "./types";
 import { uop } from "./uops";
 import { kernelize } from "./kernelize";
 import { linearize } from "./linearize";
@@ -10,7 +10,7 @@ export type Raw = number | Raw[];
 export type RuntimeName = "js" | "webgpu";
 
 type Tensor = RAWBUFFER & {shape: number[]}
-type TensorFun = (...xs:Tensor[]) => Tensor
+type TensorFun = (...xs:Tensor[]) => Promise<Tensor>
 
 class TensorVar {
 
@@ -36,39 +36,50 @@ class TensorVar {
   }
 }
 
-function compile  (fn: (...args:TensorVar[])=>TensorVar): Promise<TensorFun> {
- 
-  let ctx : {x_shapes:number[][], buffers: Map<BufferRef, RAWBUFFER>, runner: Runner} | null = null
+
+export type TensorRef = {
+  buffer:BufferRef,
+  shape:number[]
+}
+
+function compile  (fn: (...args:TensorVar[])=>TensorVar): TensorFun {
+  let ctx: {X:TensorRef[], temp: Map<BufferRef, RAWBUFFER>, runner: Runner, Y:TensorRef} | null = null
   return async (...xs:Tensor[]) =>{
 
-    let buffers: Map<BufferRef, RAWBUFFER> = new Map()
-    if (xs.length!=fn.length) throw new Error(`expected ${fn.length} inputs, got: ${xs.length}`)
-
     if (ctx == null){
-      let x_shapes = xs.map(x=>x.shape)
-      let inbuffs = xs.map((x,i)=>(mkUop("BUFFER", [], {size: x.size, slot:i})))
+      let X = xs.map(x=>({shape:x.shape, buffer:mkBuffer(x.size)}))
+      let inbuffs: BufferRef[] = xs.map(x=>(mkBuffer(x.size)))
+
       let invars = inbuffs.map((b,i)=>new TensorVar(b, xs[i].shape))
-      let graph = fn(...invars).uop
-      let kg = kernelize(graph)
-      let lg = lowerer(kg, (size)=>{
-        let b = mkUop("BUFFER", [], {size, slot: xs.length + buffers.size })
-        buffers.set(b, WEBGPU.createBuffer(size))
-        return b
-      })
+      let graph = fn(...invars)
+
+      let kg = kernelize(graph.uop)
+      let lg = lowerer(kg)
+      let buffers = new Map(uop.topo(lg).filter(x=>x.op =="BUFFER").map(r=>[r, WEBGPU.createBuffer(r.arg.size)] as [BufferRef,RAWBUFFER]))
       let sched = linearize(lg)
       let runner = await WEBGPU.createRunner(sched)
 
-      ctx = {x_shapes, buffers, runner}
+      if (lg.srcs[0].op == "STORE"){
+        let buffer = uop.topo(lg.srcs[0].srcs[1]).filter(x=>x.op == "BUFFER")[0]!
+        if (!buffer) throw new Error("output buffer not found in "+uop.fmt(lg.srcs[0]))
+        ctx = {X, temp:buffers, runner, Y: {shape: graph.shape, buffer}}
+        
+      }else throw("output buffer not found in "+uop.fmt(lg.srcs[0]))
     }
-    ctx.runner.run((ref)=>{
-      if (ref.arg.slot<xs.length){
-        return xs[ref.arg.slot]
-      }
-      if (!ctx!.buffers.get(ref)) throw new Error(`BUFFER ${ref.arg.slot} not found`)
-      return ctx!.buffers.get(ref)!
-    })
 
-    throw new Error("TODO")
+    if (xs.length!=fn.length) throw new Error(`expected ${fn.length} inputs, got: ${xs.length}`)
+    if (!ctx) throw new Error("NO CTX")
+
+    let out = WEBGPU.createBuffer(ctx.Y.buffer.arg.size)
+    await ctx.runner((ref)=>{
+      let inin = ctx!.X.findIndex(x=>x.buffer == ref)
+      if (inin>=0) return xs[inin]
+      if (ref == ctx!.Y.buffer) return out
+      let res = ctx!.temp.get(ref)
+      if (!res) throw new Error(`BUFFER ${ref.arg.slot} not found`)
+      return res
+    })
+    return {...out, shape:ctx.Y.shape,}
   }
 }
 

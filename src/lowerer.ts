@@ -1,5 +1,5 @@
 import { stridesFor } from "./helpers";
-import type { BufferRef, Kernel, UOp, UOpKind, View } from "./types";
+import { mkBuffer, type BufferRef, type Kernel, type UOp, type UOpKind, type View } from "./types";
 import { uop } from "./uops";
 
 type Range = UOpKind<"RANGE">
@@ -21,7 +21,7 @@ const indexView = (v: View[], buf: UOp, rngs:Range[]) : UOp =>{
   return uop.index(buf, idx);
 }
 
-export const lowerer = (graph: Kernel, mkBuffer: (size: number) => BufferRef): UOpKind<"KERNEL"> =>{
+export const lowerer = (graph: Kernel): UOpKind<"KERNEL"> =>{
   let rangify = (u:UOp, rngs: Range[] | null = null) : [UOp, Range[]] =>{
     if (u.op == "REDUCE_AXIS"){
       let {axis, srcs: [ch], bin} = u;
