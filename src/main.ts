@@ -160,14 +160,13 @@ const mountRunPage = async (source: string): Promise<void> => {
 
   runButton.addEventListener("click", async () => {
     output.classList.remove("error");
-    const latest = readCachedSource() ?? source;
-    await runUserCode(latest, output);
-    code.textContent = latest;
+    await runUserCode(source, output);
+    code.textContent = source;
   });
 
   panel.append(runButton, code, output);
   app.appendChild(panel);
-  await runUserCode(readCachedSource() ?? source, output);
+  await runUserCode(source, output);
 };
 
 const mountEditPage = async (source: string): Promise<void> => {

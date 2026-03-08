@@ -4,7 +4,7 @@ import { compile, Tensor, TensorVar } from "../tensor";
 
 let N = 1000
 
-
+DEBUG.set(0)
 
 let r = await Tensor.rand([N,N])
 
@@ -24,6 +24,6 @@ for (let i =0; i <RUNS; i++){
   await matmul(r)
 }
 
-let t = {dt: (performance.now()-st) / RUNS}
+let avg_s = (performance.now()-st)/RUNS / 1e3
 
-console.log(`time: ${String(t.dt/1e3).slice(0,10)}, GFLOPS: ${String((N*N*N*2)/t.dt/1e9).slice(0,10)}`)
+console.log(`time: ${String(avg_s).slice(0,10)}, GFLOPS: ${String((N*N*N*2)/avg_s/1e9).slice(0,10)}`)
