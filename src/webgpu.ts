@@ -235,6 +235,7 @@ const mkKernel = (d:GPUDevice, {srcs:graph}:Linear) =>{
       pass.dispatchWorkgroups(compiled.dispatch[0], compiled.dispatch[1], compiled.dispatch[2]);
       pass.end();
       d.queue.submit([ce.finish()]);
+      await d.queue.onSubmittedWorkDone();
     }
 
     return run

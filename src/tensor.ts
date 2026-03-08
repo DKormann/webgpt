@@ -1,4 +1,4 @@
-import { mkBuffer, mkUop, Runner, type BinOp, type BufferRef, type RAWBUFFER, type UOp } from "./types";
+import { mkBuffer, mkUop, type Runner, type BinOp, type BufferRef, type RAWBUFFER, type UOp } from "./types";
 import { uop } from "./uops";
 import { kernelize } from "./kernelize";
 import { linearize, schedule_fmt } from "./linearize";

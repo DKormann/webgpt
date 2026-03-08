@@ -1,6 +1,6 @@
 
 import { PatternMatcher, UPat } from "./patter_matcher";
-import { Kernel, mkUop, type UOp, type UOpKind } from "./types";
+import { mkUop, type Kernel, type UOp, type UOpKind } from "./types";
 import { uop } from "./uops";
 
 

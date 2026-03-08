@@ -1,4 +1,4 @@
-import { Op, UOp } from "./types";
+import type { Op, UOp } from "./types";
 
 
 type PatternCtx = {[key:string]:UOp}
@@ -37,5 +37,4 @@ export class PatternMatcher {
     return graph
   }
 }
-
 

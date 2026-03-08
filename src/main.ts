@@ -1,5 +1,5 @@
 import { DEBUG } from "./debug";
-import { BACKEND, Tensor } from "./tensor";
+import { Tensor, TensorVar, compile } from "./tensor";
 
 type Mode = "run" | "edit";
 
@@ -32,6 +32,7 @@ const config: PageConfig = {
 
 const storageKey = `webgpt:script:${config.scriptName}`;
 const supportsWebGPU = typeof navigator !== "undefined" && !!navigator.gpu;
+const BACKEND: undefined = undefined;
 
 const toText = (value: unknown): string => {
   if (typeof value === "string") return value;
@@ -65,19 +66,25 @@ const runUserCode = async (source: string, output: HTMLElement): Promise<void> =
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (...args: string[]) => (...fnArgs: unknown[]) => Promise<void>;
   const g = globalThis as typeof globalThis & {
     Tensor?: typeof Tensor;
-    BACKEND?: typeof BACKEND;
+    BACKEND?: undefined;
     DEBUG?: typeof DEBUG;
+    TensorVar?: typeof TensorVar;
+    compile?: typeof compile;
   };
   const previousTensor = g.Tensor;
   const previousBackend = g.BACKEND;
   const previousDebug = g.DEBUG;
+  const previousTensorVar = g.TensorVar;
+  const previousCompile = g.compile;
 
   try {
     g.Tensor = Tensor;
     g.BACKEND = BACKEND;
     g.DEBUG = DEBUG;
-    const fn = new AsyncFunction("Tensor", "BACKEND", "DEBUG", "webgpuAvailable", "console", normalizeSource(source));
-    await fn(Tensor, BACKEND, DEBUG, supportsWebGPU, captureConsole);
+    g.TensorVar = TensorVar;
+    g.compile = compile;
+    const fn = new AsyncFunction("Tensor", "BACKEND", "DEBUG", "TensorVar", "compile", "webgpuAvailable", "console", normalizeSource(source));
+    await fn(Tensor, BACKEND, DEBUG, TensorVar, compile, supportsWebGPU, captureConsole);
     if (lines.length === 0) output.textContent = "(no console output)";
   } catch (error) {
     output.classList.add("error");
@@ -86,6 +93,8 @@ const runUserCode = async (source: string, output: HTMLElement): Promise<void> =
     g.Tensor = previousTensor;
     g.BACKEND = previousBackend;
     g.DEBUG = previousDebug;
+    g.TensorVar = previousTensorVar;
+    g.compile = previousCompile;
   }
 };
 

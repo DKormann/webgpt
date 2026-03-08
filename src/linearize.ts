@@ -1,4 +1,4 @@
-import { Kernel, mkUop, Programm, UOp, UOpKind } from "./types";
+import { mkUop, type Kernel, type Programm, type UOp, type UOpKind } from "./types";
 import { uop } from "./uops";
 
 type KernelUOp = UOpKind<"KERNEL">;

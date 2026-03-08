@@ -3,10 +3,20 @@ import { DEBUG } from "../debug";
 import { Tensor } from "../tensor";
 
 DEBUG.set(1)
-// const a = Tensor.new([[1, 2, 3], [4, 5, 6]]);
-const a = Tensor.rand([10,10])
 
-await a.run("webgpu")
-// const b = Tensor.new([[7, 8], [9, 10], [11, 12]]);
-// const out = await a.matmul(b).run("webgpu");
-// console.log(out)
+const N = 1000
+
+const a = Tensor.rand([N, N])
+const b = Tensor.rand([N, N])
+
+
+let st = performance.now()
+
+let res = await a.matmul(b).run("webgpu")
+
+let dt = performance.now() - st
+
+console.log({
+  GFLOPS: (2 * N * N * N) / (dt / 1e3) / 1e9,
+  seconds: dt / 1e3
+})
