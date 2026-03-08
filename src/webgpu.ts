@@ -175,6 +175,62 @@ const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
   const dispatch: [number, number, number] = [1, 1, 1];
   for (const s0 of specials) dispatch[s0.axis] = Math.max(1, s0.block);
 
+  const matmulFast = (() => {
+    if (rands.length) return null;
+    const sx = specials.find((s) => s.axis === 0);
+    const sy = specials.find((s) => s.axis === 1);
+    const red = graph.find((u): u is UOp & { op: "RANGE" } => u.op === "RANGE");
+    const accStore = graph.find((u): u is UOp & { op: "STORE" } => u.op === "STORE" && u.srcs[1]?.op === "DEFINE_REG");
+    const outStore = [...graph].reverse().find((u): u is UOp & { op: "STORE" } => u.op === "STORE" && u.srcs[1]?.op === "INDEX" && u.srcs[1].srcs[0]?.op === "BUFFER");
+    if (!sx || !sy || !red || !accStore || !outStore) return null;
+    const add = accStore.srcs[0];
+    if (add.op !== "ADD") return null;
+    const mul = add.srcs.find((s): s is UOp & { op: "MUL" } => s.op === "MUL");
+    if (!mul) return null;
+    const [ia, ib] = mul.srcs;
+    if (ia.op !== "INDEX" || ib.op !== "INDEX") return null;
+    const ba = ia.srcs[0], bb = ib.srcs[0];
+    if (ba.op !== "BUFFER" || bb.op !== "BUFFER") return null;
+    const outBase = outStore.srcs[1].srcs[0];
+    if (outBase.op !== "BUFFER") return null;
+    const mats = Array.from(new Set([ba, bb, outBase])) as BufferRef[];
+    const bind = new Map(mats.map((b, i) => [b, i]));
+    const M = sx.extent, N = sy.extent, K = red.max;
+    const T = 16;
+    const tiles = Math.ceil(K / T);
+    const wgsl = [
+      ...mats.map((b, i) => `@group(0) @binding(${i}) var<storage, ${b === outBase ? "read_write" : "read"}> b${i}: array<f32>;`),
+      `var<workgroup> Asub: array<f32, ${T * T}>;`,
+      `var<workgroup> Bsub: array<f32, ${T * T}>;`,
+      `@compute @workgroup_size(${T}, ${T}, 1)`,
+      "fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {",
+      "  let row: u32 = gid.x;",
+      "  let col: u32 = gid.y;",
+      "  var acc: f32 = 0.0;",
+      `  for (var t:u32 = 0u; t < ${tiles}u; t = t + 1u) {`,
+      `    let kA: u32 = t * ${T}u + lid.y;`,
+      `    let kB: u32 = t * ${T}u + lid.x;`,
+      `    let li: u32 = lid.x * ${T}u + lid.y;`,
+      `    if (row < ${M}u && kA < ${K}u) { Asub[li] = b${bind.get(ba)!}[row * ${K}u + kA]; } else { Asub[li] = 0.0; }`,
+      `    if (kB < ${K}u && col < ${N}u) { Bsub[li] = b${bind.get(bb)!}[kB * ${N}u + col]; } else { Bsub[li] = 0.0; }`,
+      "    workgroupBarrier();",
+      `    for (var kk:u32 = 0u; kk < ${T}u; kk = kk + 1u) {`,
+      `      acc = acc + Asub[lid.x * ${T}u + kk] * Bsub[kk * ${T}u + lid.y];`,
+      "    }",
+      "    workgroupBarrier();",
+      "  }",
+      `  if (row < ${M}u && col < ${N}u) { b${bind.get(outBase)!}[row * ${N}u + col] = acc; }`,
+      "}",
+    ].join("\n");
+    return {
+      buffers: mats,
+      randCount: 0,
+      dispatch: [Math.ceil(M / T), Math.ceil(N / T), 1] as [number, number, number],
+      wgsl,
+    };
+  })();
+  if (matmulFast) return matmulFast;
+
   return {
     buffers,
     randCount: rands.length,
@@ -235,7 +291,6 @@ const mkKernel = (d:GPUDevice, {srcs:graph}:Linear) =>{
       pass.dispatchWorkgroups(compiled.dispatch[0], compiled.dispatch[1], compiled.dispatch[2]);
       pass.end();
       d.queue.submit([ce.finish()]);
-      await d.queue.onSubmittedWorkDone();
     }
 
     return run
@@ -266,6 +321,7 @@ export const WEBGPU: Backend<WEBGPUBUFFER> = {
         if (!g) throw new Error(`GPU buffer slot ${r.arg.slot} not bound`);
         return g;
       })
+      await d.queue.onSubmittedWorkDone();
     };
   },
 };

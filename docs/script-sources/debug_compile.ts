@@ -1,6 +1,7 @@
-
 import { DEBUG } from "../debug";
 import { compile, Tensor, TensorVar } from "../tensor";
+
+DEBUG.set(1)
 
 let N = 1000
 
