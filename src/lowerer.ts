@@ -43,12 +43,13 @@ export const lowerer = (graph: Kernel): UOpKind<"KERNEL"> =>{
       return [indexView(u.views, s as UOp & {size:number}, rngs),rngs]
     }
 
-    if (u.op =="BUFFER" || u.op =="RAND"){
-      let size = u.op == "BUFFER" ? u.arg.size : u.size ?? 0;
+    if (u.op =="BUFFER" || u.op == "RAND"){
+      let size = u.arg.size;
       if (rngs == null) rngs = [uop.range(size)]
       if (rngs.length > 1 || rngs[0].max != size) throw new Error("wrong ranges")
-      return [uop.index(u, rngs[0]), rngs]
+      return  [u.op == "RAND" ? {...u, srcs: [rngs[0] ] } : uop.index(u, rngs[0]), rngs]
     }
+
 
     if (u.op== "ADD" || u.op == "MUL") {
       let {srcs: [a,b]} = u

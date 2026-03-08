@@ -25,9 +25,10 @@ export type BufferRef = Tagged<"BUFFER", [], {size:number, slot:number}>
 export type Linear = Tagged<"LINEAR", UOp[], undefined>
 export type Programm = Tagged<"PROGRAMM", Linear[], undefined>
 export type Kernel = Tagged<"KERNEL", [UOp], {size:number}>
+export type Rand = Tagged<"RAND", [UOp] | [], {seed:number, size:number}>
 
 
-type highUOP = BufferRef | Linear | Programm | Kernel
+type highUOP = BufferRef | Linear | Programm | Kernel | Rand
 
 export const mkUop = <OP extends highUOP['op'] > (op:OP, srcs: ((highUOP & {op:OP})['srcs']), arg?:(highUOP & {op:OP})['arg'])  => ({op, srcs, arg})  as (highUOP & {op:OP})
 
@@ -89,11 +90,6 @@ export type UOp = {
   op: "CONST",
   srcs: [],
   val: number[],
-} | {
-  op: "RAND",
-  srcs: [],
-  seed: number,
-  size?: number
 } | {
   op: "VIEW",
   srcs: [UOp],

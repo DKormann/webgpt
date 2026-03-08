@@ -129,6 +129,7 @@ const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
   let gettype = (u:UOp) =>{
     if (u.op == "RANGE") return "u32";
     if (u.op == "INDEX") return "f32";
+    if (u.op == "RAND") return "f32";
     if (u.op == "SPECIAL") return "u32";
     if (u.op == "DEFINE_REG") return "f32";
     if (u.op == "ADD" || u.op == "MUL") return gettype(u.srcs[0]) 
@@ -139,7 +140,12 @@ const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
     if (u.op == "DEFINE_REG") addreg("0", u)
     else if (u.op == "ADD") addbin("+", u)
     else if (u.op == "MUL") addbin("*", u)
-    else if (u.op == "INDEX") names.set(u, `${names.get(u.srcs[0])} [${names.get(u.srcs[1])}]`)
+    else if (u.op == "INDEX") names.set(u, `${names.get(u.srcs[0])}[${names.get(u.srcs[1])}]`)
+    else if (u.op == "RAND") {
+      const ri = randIx.get(u);
+      if (ri == null) throw new Error("missing RAND seed binding");
+      addreg(`randf(seeds[${ri}u] ^ ${names.get(u.srcs[0]!) ?? "0u"})`, u)
+    }
     else if (u.op == "BUFFER") names.set(u,`b${buffers.indexOf(u)}`)
     else if (u.op == "CONST") names.set(u, String(u.val[0]))
     else if (u.op == "RANGE") {
@@ -208,7 +214,7 @@ const mkKernel = (d:GPUDevice, {srcs:graph}:Linear) =>{
         : null;
     if (seedBuf) {
       const rands = randNodesOf(bodyOf(graph));
-      d.queue.writeBuffer(seedBuf, 0, new Uint32Array(rands.map((r) => Math.floor(r.seed) >>> 0)));
+      d.queue.writeBuffer(seedBuf, 0, new Uint32Array(rands.map((r) => Math.floor(r.arg.seed) >>> 0)));
     }
 
     const pipeline = d.createComputePipeline({ layout: "auto", compute: { module: d.createShaderModule({ code: compiled.wgsl }), entryPoint: "main" } });

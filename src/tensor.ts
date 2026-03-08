@@ -1,4 +1,4 @@
-import { mkBuffer, Runner, type BinOp, type BufferRef, type RAWBUFFER, type UOp } from "./types";
+import { mkBuffer, mkUop, Runner, type BinOp, type BufferRef, type RAWBUFFER, type UOp } from "./types";
 import { uop } from "./uops";
 import { kernelize } from "./kernelize";
 import { linearize, schedule_fmt } from "./linearize";
@@ -25,7 +25,7 @@ export class TensorVar {
 
   constructor(public uop:UOp, public shape: number[]){}
 
-  static rand = (shape:number[]) => new TensorVar(uop.rand(0,numel(shape)), shape)
+  static rand = (shape:number[]) => new TensorVar(mkUop("RAND", [], {size:numel(shape), seed: 0}), shape)
 
   static const = (val: number[]) => new TensorVar(uop.const(...val), [val.length])
   
