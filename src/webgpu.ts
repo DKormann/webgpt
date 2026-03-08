@@ -116,123 +116,51 @@ const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
   const gid = ["gid.x", "gid.y", "gid.z"] as const;
   if (specials.length > 3) throw new Error("supports at most 3 SPECIAL dims");
 
-  const c = (u: UOp & { op: "CONST" }) => u.val[0] ?? 0;
-  const op2 = (u: UOp) => u.op === "ADD" || u.op === "MUL";
-  const newTemps = () => ({ n: 0 });
-  const emitIdx = (u: UOp, lets: string[], memo: Map<UOp, string>, t = newTemps()): string => {
-    const m = memo.get(u);
-    if (m) return m;
-    if (u.op === "CONST") return `${c(u)}u`;
-    if (u.op === "RANGE" || u.op === "SPECIAL") return names.get(u) ?? (() => { throw new Error("range used outside scope"); })();
-    if (op2(u)) {
-      const [a, b] = u.srcs as [UOp, UOp];
-      const av = emitIdx(a, lets, memo, t);
-      const bv = emitIdx(b, lets, memo, t);
-      const name = `i${t.n++}`;
-      lets.push(`let ${name}: u32 = (${av} ${u.op === "ADD" ? "+" : "*"} ${bv});`);
-      memo.set(u, name);
-      return name;
-    }
-    throw new Error(`unsupported index arg: ${u.op}`);
-  };
-  const emitVal = (u: UOp, lets: string[], vmemo: Map<UOp, string>, imemo: Map<UOp, string>, t = newTemps()): string => {
-    const m = vmemo.get(u);
-    if (m) return m;
-    if (u.op === "CONST") {
-      const v = c(u);
-      return Number.isInteger(v) ? `${v}.0` : String(v);
-    }
-    if (u.op === "RANGE" || u.op === "SPECIAL") return `f32(${names.get(u) ?? (() => { throw new Error("range used outside scope"); })()})`;
-    if (op2(u)) {
-      const [a, b] = u.srcs as [UOp, UOp];
-      const av = emitVal(a, lets, vmemo, imemo, t);
-      const bv = emitVal(b, lets, vmemo, imemo, t);
-      const name = `v${t.n++}`;
-      lets.push(`let ${name}: f32 = (${av} ${u.op === "ADD" ? "+" : "*"} ${bv});`);
-      vmemo.set(u, name);
-      return name;
-    }
-    if (u.op === "DEFINE_REG") return regs.get(u) ?? (() => { throw new Error("register used before declaration"); })();
-    if (u.op === "NOOP") {
-      const ch = u.srcs[0];
-      if (op2(ch) && ch.srcs[0]?.op === "DEFINE_REG") return regs.get(ch.srcs[0]) ?? (() => { throw new Error("register read with undeclared register"); })();
-      return emitVal(ch, lets, vmemo, imemo, t);
-    }
-    if (u.op === "INDEX") {
-      const [base, i] = u.srcs;
-      const ix = emitIdx(i, lets, imemo, t);
-      const name = `v${t.n++}`;
-      if (base.op === "RAND") {
-        const ri = randIx.get(base);
-        if (ri == null) throw new Error("missing RAND seed binding");
-        lets.push(`let ${name}: f32 = randf(seeds[${ri}u] ^ ${ix});`);
-        vmemo.set(u, name);
-        return name;
-      }
-      if (base.op !== "BUFFER") throw new Error(`unsupported value index base: ${base.op}`);
-      const b = bindBySlot.get(base);
-      if (b == null) throw new Error("graph references unknown buffer slot");
-      lets.push(`let ${name}: f32 = b${b}[${ix}];`);
-      vmemo.set(u, name);
-      return name;
-    }
-    throw new Error(`unsupported store src: ${u.op}`);
-  };
+  // lines.push("hello")
 
-  let s = 0;
-  for (const u of graph) {
-    if (u.op === "SPECIAL") {
-      names.set(u, gid[s++]);
-      continue;
-    }
-    if (u.op === "RANGE") {
-      const n = `r${ranges.length}`;
-      names.set(u, n);
-      ranges.push(u);
-      lines.push(`for (var ${n}:u32 = 0u; ${n} < ${u.max}u; ${n} = ${n} + 1u) {`);
-      continue;
-    }
-    if (u.op === "ENDRANGE") {
-      if (ranges.pop() !== u.srcs[0]) throw new Error("ENDRANGE mismatch");
-      lines.push("}");
-      continue;
-    }
-    if (u.op === "DEFINE_REG") {
-      const r = `reg${regs.size}`;
-      regs.set(u, r);
-      lines.push(`var ${r}: f32 = ${u.default};`);
-      continue;
-    }
-    if (op2(u)) {
-      const [a, b] = u.srcs as [UOp, UOp];
-      if (a.op !== "DEFINE_REG") continue;
-      const r = regs.get(a);
-      if (!r) throw new Error("register update with undeclared register");
-      const lets: string[] = [];
-      const rhs = emitVal(b, lets, new Map<UOp, string>(), new Map<UOp, string>());
-      lines.push(...lets);
-      lines.push(`${r} = ${u.op === "ADD" ? `${r} + ${rhs}` : `${r} * ${rhs}`};`);
-      continue;
-    }
-    if (u.op === "NOOP" || u.op === "KERNEL" || u.op === "RAND" || u.op === "BUFFER" || u.op === "CONST" || u.op === "INDEX" || op2(u)) continue;
-    if (u.op !== "STORE") throw new Error(`unsupported root op: ${u.op}`);
-    const [src, dst] = u.srcs;
-    if (dst.op !== "INDEX" || dst.srcs[0].op !== "BUFFER") throw new Error("unsupported store dst");
-    written.add(dst.srcs[0]);
-    const b = bindBySlot.get(dst.srcs[0]);
-    if (b == null) throw new Error("graph references unknown buffer slot");
-    const lets: string[] = [];
-    const imemo = new Map<UOp, string>();
-    const vmemo = new Map<UOp, string>();
-    const dstIdx = emitIdx(dst.srcs[1], lets, imemo);
-    const srcVal = emitVal(src, lets, vmemo, imemo);
-    lines.push(...lets);
-    lines.push(`b${b}[${dstIdx}] = ${srcVal};`);
+  let addreg = (c:string, u:UOp) =>{
+    let name = 'x' + names.size;
+    lines.push(`${u.op == "DEFINE_REG" ? "var" : "let"} ${name}: ${gettype(u)} = ${c};`)
+    names.set(u, name)
   }
-  while (ranges.length) {
-    ranges.pop();
-    lines.push("}");
+
+  let addbin = (op:string, u:UOp) => addreg(`${names.get(u.srcs[0]!)} ${op} ${names.get(u.srcs[1]!)}`, u)
+
+  let gettype = (u:UOp) =>{
+    if (u.op == "RANGE") return "u32";
+    if (u.op == "INDEX") return "f32";
+    if (u.op == "SPECIAL") return "u32";
+    if (u.op == "DEFINE_REG") return "f32";
+    if (u.op == "ADD" || u.op == "MUL") return gettype(u.srcs[0]) 
+    return "UNK DTYPE"
   }
+
+  graph.forEach(u=>{
+    if (u.op == "DEFINE_REG") addreg("0", u)
+    else if (u.op == "ADD") addbin("+", u)
+    else if (u.op == "MUL") addbin("*", u)
+    else if (u.op == "INDEX") names.set(u, `${names.get(u.srcs[0])} [${names.get(u.srcs[1])}]`)
+    else if (u.op == "BUFFER") names.set(u,`b${buffers.indexOf(u)}`)
+    else if (u.op == "CONST") names.set(u, String(u.val[0]))
+    else if (u.op == "RANGE") {
+      lines.push(`for (var r = 0u; r < ${u.max}; r ++){`)
+      addreg('r', u)
+    }
+    else if (u.op == "STORE"){
+
+      uop.topo(u.srcs[1]).filter(x=>x.op == "BUFFER").forEach(b=>written.add(b))
+      lines.push(`${names.get(u.srcs[1])} = ${names.get(u.srcs[0])};`)
+    }else if (u.op == "NOOP") names.set(u, names.get(u.srcs[0])!)
+    else if (u.op == "ENDRANGE") lines.push("}")
+
+    else if (u.op == "SPECIAL") names.set(u, `${gid[u.axis]}`)
+    else if ( u.op == "KERNEL") return
+    else return lines.push(u.op)
+
+  })
+
+
+
 
   const needRand = rands.length > 0;
   const guard = specials.map((u) => `${gid[u.axis]} >= ${u.extent}u`).join(" || ");
@@ -246,7 +174,7 @@ const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
     randCount: rands.length,
     dispatch,
     wgsl: [
-      // ...slots.map((_, i) => `@group(0) @binding(${i}) var<storage, read_write> b${i}: array<f32>;`),
+
       ...buffers.map((b,i)=>`@group(0) @binding(${i}) var<storage, ${written.has(b) ? "read_write" : "read"}> b${i}: array<f32>;`),
       ...(needRand ? [`@group(0) @binding(${seedBinding}) var<storage, read> seeds: array<u32>;`] : []),
       ...(needRand
