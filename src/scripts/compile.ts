@@ -27,7 +27,7 @@ for (let i =0; i <10; i++){
 
 
 res.map((t,i) => {
-  console.log(`run ${i}, time: ${t.dt/1e3}, GFLOPS: ${(N*N*N*2)/t.dt/1e9}`)
+  console.log(`run ${i}, time: ${String(t.dt/1e3).slice(0,10)}, GFLOPS: ${String((N*N*N*2)/t.dt/1e9).slice(0,10)}`)
 })
 
 

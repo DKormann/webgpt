@@ -21,7 +21,8 @@ export const mkKernel = (g:UOp):UOp => mkUop("KERNEL", [g], {size:findSize(g)})
 let pm = new PatternMatcher([
   [new UPat("v1", "VIEW", [new UPat("v2", "VIEW")]), ({v1,v2})=>(uop.view(v2.srcs[0]!, ([v1,v2] as UOpKind<"VIEW">[]).map(v=>v.views).flat()))],
   [new UPat("x", "VIEW", [new UPat()]), ({x})=>{
-    if (x.srcs[0]?.op == "KERNEL" || x.srcs[0]?.op == "RAND") return null
+
+    if (["KERNEL", "RAND", "BUFFER"].includes(x.srcs[0]!.op)) return null
     return {...x,srcs:[mkKernel(x.srcs[0]!)]} as UOp
   }],
 ])
