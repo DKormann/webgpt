@@ -147,26 +147,47 @@ const mountRunPage = async (source: string): Promise<void> => {
   app.appendChild(makeHeader());
   const panel = document.createElement("section");
   panel.className = "panel";
+  const cached = readCachedSource();
+  let activeSource = cached ?? source;
 
   const runButton = document.createElement("button");
   runButton.textContent = "Run script";
 
+  const reset = document.createElement("button");
+  reset.textContent = "Use default script";
+  reset.style.marginLeft = "0.5rem";
+
+  const mode = document.createElement("p");
+  mode.className = "status";
+  mode.textContent = cached
+    ? "Running cached edited script from localStorage."
+    : "Running default script file.";
+
   const code = document.createElement("pre");
   code.className = "code";
-  code.textContent = source;
+  code.textContent = activeSource;
 
   const output = document.createElement("pre");
   output.className = "output";
 
   runButton.addEventListener("click", async () => {
     output.classList.remove("error");
-    await runUserCode(source, output);
-    code.textContent = source;
+    await runUserCode(activeSource, output);
+    code.textContent = activeSource;
   });
 
-  panel.append(runButton, code, output);
+  reset.addEventListener("click", () => {
+    clearCachedSource();
+    activeSource = source;
+    mode.textContent = "Running default script file.";
+    code.textContent = activeSource;
+    output.classList.remove("error");
+    output.textContent = "Local cache cleared. Running default script now.";
+  });
+
+  panel.append(runButton, reset, mode, code, output);
   app.appendChild(panel);
-  await runUserCode(source, output);
+  await runUserCode(activeSource, output);
 };
 
 const mountEditPage = async (source: string): Promise<void> => {
