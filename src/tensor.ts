@@ -1,10 +1,11 @@
 import { mkBuffer, Runner, type BinOp, type BufferRef, type RAWBUFFER, type UOp } from "./types";
 import { uop } from "./uops";
 import { kernelize } from "./kernelize";
-import { linearize } from "./linearize";
+import { linearize, schedule_fmt } from "./linearize";
 import { lowerer } from "./lowerer";
 import { WEBGPU } from "./webgpu";
 import { numel } from "./helpers";
+import { DEBUG } from "./debug";
 
 export type Raw = number | Raw[];
 export type RuntimeName = "js" | "webgpu";
@@ -16,7 +17,7 @@ type TensorFun = (...xs:Tensor[]) => Promise<Tensor>
 
 export const Tensor = {
   rand : (shape: number[])=> compile(()=>TensorVar.rand(shape))()
-  
+
 }
 
 
@@ -76,12 +77,20 @@ export function compile  (fn: (...args:TensorVar[])=>TensorVar): TensorFun {
 
       let kg = kernelize(graph.uop)
       let lg = lowerer(kg)
+
       let buffers = new Map(
         uop.topo(lg)
           .filter((x): x is BufferRef => x.op =="BUFFER")
           .map(r=>[r.arg.slot, WEBGPU.createBuffer(r.arg.size)] as [number,RAWBUFFER])
       )
+
       let sched = linearize(lg)
+
+      if (DEBUG.get()){
+        console.log(`kernel graph:\n${uop.fmt(kg)}`)
+        console.log(`lowered graph:\n${uop.fmt(lg)}`)
+        console.log(`schedule graph:\n${schedule_fmt(sched)}`)
+      }
       let runner = await WEBGPU.createRunner(sched)
       const last = sched.srcs[sched.srcs.length - 1];
       const st = [...last.srcs].reverse().find((x): x is UOp & { op: "STORE" } => x.op === "STORE");
