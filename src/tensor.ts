@@ -1,10 +1,10 @@
-import { Backend, mkBuffer, mkUop, Runner, type BinOp, type BufferRef, type RAWBUFFER, type UOp } from "./types";
+import { mkBuffer, Runner, type BinOp, type BufferRef, type RAWBUFFER, type UOp } from "./types";
 import { uop } from "./uops";
 import { kernelize } from "./kernelize";
 import { linearize } from "./linearize";
 import { lowerer } from "./lowerer";
 import { WEBGPU } from "./webgpu";
-
+import { numel } from "./helpers";
 
 export type Raw = number | Raw[];
 export type RuntimeName = "js" | "webgpu";
@@ -12,15 +12,20 @@ export type RuntimeName = "js" | "webgpu";
 type Tensor = RAWBUFFER & {shape: number[]}
 type TensorFun = (...xs:Tensor[]) => Promise<Tensor>
 
-class TensorVar {
+
+
+export class TensorVar {
 
   constructor(public uop:UOp, public shape: number[]){}
+
+  static rand = (shape:number[]) => new TensorVar(uop.rand(0,numel(shape)), shape)
   
   static bin = (op:BinOp, a:TensorVar, b:TensorVar)=> new TensorVar(uop.bin(op)(a.uop,b.uop), a.shape)
   mul = (other:TensorVar) => TensorVar.bin("MUL", this, other)
+  add = (other:TensorVar) => TensorVar.bin("ADD", this, other)
   sum = (dims?: number[]) => {
     dims = dims ?? this.shape.map((x,i)=>i)
-    new TensorVar(uop.reduce(this.uop, "ADD", dims), this.shape.filter((d,i)=>!dims.includes(i)))
+    return new TensorVar(uop.reduce(this.uop, "ADD", dims), this.shape.filter((d,i)=>!dims.includes(i)))
   }
 
   permute = (dims:number[]) => new TensorVar({op:"PERMUTE", shape: dims, srcs:[this.uop], }, dims.map(d=>this.shape[d]))
@@ -42,7 +47,7 @@ export type TensorRef = {
   shape:number[]
 }
 
-function compile  (fn: (...args:TensorVar[])=>TensorVar): TensorFun {
+export function compile  (fn: (...args:TensorVar[])=>TensorVar): TensorFun {
   let ctx: {X:TensorRef[], temp: Map<BufferRef, RAWBUFFER>, runner: Runner, Y:TensorRef} | null = null
   return async (...xs:Tensor[]) =>{
 
@@ -84,5 +89,18 @@ function compile  (fn: (...args:TensorVar[])=>TensorVar): TensorFun {
 }
 
 function main(){
-  
+  let fn = compile((a,b)=>{
+
+    let [K,L] = a.shape
+    let [M,N] = b.shape
+    if (M!=L) throw new Error(`shapes dont match`)
+    a = a.reshape([K,L,1]).expand([K,L,N])
+    b = b.reshape([1,L,N]).expand([K,L,N])
+    let res = a.mul(b).sum([1])
+    return res
+  })
+
+  let rand = compile(()=>TensorVar.rand([2,2]))
+  let t = rand()
+
 }
