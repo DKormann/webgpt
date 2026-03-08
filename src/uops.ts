@@ -8,6 +8,7 @@ export const uop
 // : Record <string, (...args: any[]) => UOp>
 = {
   bin, add: bin("ADD"), mul: bin("MUL"),
+  buffer: (slot: number, size: number): UOp & { op: "BUFFER" } => ({ op: "BUFFER", srcs: [], arg: { slot, size } }),
 
   range : (max:number):UOp & {op:"RANGE"} => ({op:"RANGE", srcs:[], id:_nextRangeId++, max}),
   endrange : (range: UOp & {op: "RANGE"}) : UOp & {op:"ENDRANGE"} => ({op:"ENDRANGE", srcs:[range]}),

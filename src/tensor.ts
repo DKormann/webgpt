@@ -14,11 +14,19 @@ type TensorFun = (...xs:Tensor[]) => Promise<Tensor>
 
 
 
+export const Tensor = {
+  rand : (shape: number[])=> compile(()=>TensorVar.rand(shape))()
+  
+}
+
+
 export class TensorVar {
 
   constructor(public uop:UOp, public shape: number[]){}
 
   static rand = (shape:number[]) => new TensorVar(uop.rand(0,numel(shape)), shape)
+
+  static const = (val: number[]) => new TensorVar(uop.const(...val), [val.length])
   
   static bin = (op:BinOp, a:TensorVar, b:TensorVar)=> new TensorVar(uop.bin(op)(a.uop,b.uop), a.shape)
   mul = (other:TensorVar) => TensorVar.bin("MUL", this, other)
@@ -35,9 +43,17 @@ export class TensorVar {
     let [K,V] = this.shape
     let [V_, W] = other.shape
     if (V!=V_) throw new Error("matmul: V!=V_")
-    return this.reshape([K,V,1]).expand([K,V,W])
-    .mul(this.reshape([1,V,W]).expand([K,V,W]))
-    .sum([1])
+    return new TensorVar(
+      uop.reduce(
+        uop.mul(
+          uop.view(this.uop, [{ dims: [K, V, W], strides: [V, 1, 0] }]),
+          uop.view(other.uop, [{ dims: [K, V, W], strides: [0, W, 1] }]),
+        ),
+        "ADD",
+        [1]
+      ),
+      [K, W]
+    )
   }
 }
 
@@ -48,28 +64,31 @@ export type TensorRef = {
 }
 
 export function compile  (fn: (...args:TensorVar[])=>TensorVar): TensorFun {
-  let ctx: {X:TensorRef[], temp: Map<BufferRef, RAWBUFFER>, runner: Runner, Y:TensorRef} | null = null
+  let ctx: {X:TensorRef[], temp: Map<number, RAWBUFFER>, runner: Runner, Y:TensorRef} | null = null
   return async (...xs:Tensor[]) =>{
 
     if (ctx == null){
-      let X = xs.map(x=>({shape:x.shape, buffer:mkBuffer(x.size)}))
-      let inbuffs: BufferRef[] = xs.map(x=>(mkBuffer(x.size)))
+      let inbuffs: BufferRef[] = xs.map(x=>mkBuffer(x.size))
+      let X = xs.map((x, i)=>({shape:x.shape, buffer:inbuffs[i]}))
 
       let invars = inbuffs.map((b,i)=>new TensorVar(b, xs[i].shape))
       let graph = fn(...invars)
 
       let kg = kernelize(graph.uop)
       let lg = lowerer(kg)
-      let buffers = new Map(uop.topo(lg).filter(x=>x.op =="BUFFER").map(r=>[r, WEBGPU.createBuffer(r.arg.size)] as [BufferRef,RAWBUFFER]))
+      let buffers = new Map(
+        uop.topo(lg)
+          .filter((x): x is BufferRef => x.op =="BUFFER")
+          .map(r=>[r.arg.slot, WEBGPU.createBuffer(r.arg.size)] as [number,RAWBUFFER])
+      )
       let sched = linearize(lg)
       let runner = await WEBGPU.createRunner(sched)
-
-      if (lg.srcs[0].op == "STORE"){
-        let buffer = uop.topo(lg.srcs[0].srcs[1]).filter(x=>x.op == "BUFFER")[0]!
-        if (!buffer) throw new Error("output buffer not found in "+uop.fmt(lg.srcs[0]))
-        ctx = {X, temp:buffers, runner, Y: {shape: graph.shape, buffer}}
-        
-      }else throw("output buffer not found in "+uop.fmt(lg.srcs[0]))
+      const last = sched.srcs[sched.srcs.length - 1];
+      const st = [...last.srcs].reverse().find((x): x is UOp & { op: "STORE" } => x.op === "STORE");
+      if (!st) throw new Error("output store not found in last linear kernel");
+      const buffer = uop.topo(st.srcs[1]).find((x): x is BufferRef => x.op === "BUFFER");
+      if (!buffer) throw new Error("output buffer not found in " + uop.fmt(st));
+      ctx = {X, temp:buffers, runner, Y: {shape: graph.shape, buffer}}
     }
 
     if (xs.length!=fn.length) throw new Error(`expected ${fn.length} inputs, got: ${xs.length}`)
@@ -77,14 +96,15 @@ export function compile  (fn: (...args:TensorVar[])=>TensorVar): TensorFun {
 
     let out = WEBGPU.createBuffer(ctx.Y.buffer.arg.size)
     await ctx.runner((ref)=>{
-      let inin = ctx!.X.findIndex(x=>x.buffer == ref)
-      if (inin>=0) return xs[inin]
-      if (ref == ctx!.Y.buffer) return out
-      let res = ctx!.temp.get(ref)
+      let inin = ctx!.X.findIndex(x=>x.buffer.arg.slot == ref.arg.slot)
+      let res: RAWBUFFER;
+      if (inin>=0) res = xs[inin]
+      else if (ref.arg.slot == ctx!.Y.buffer.arg.slot) res = out
+      else res = ctx!.temp.get(ref.arg.slot)!
       if (!res) throw new Error(`BUFFER ${ref.arg.slot} not found`)
       return res
     })
-    return {...out, shape:ctx.Y.shape,}
+    return Object.assign(out, { shape: ctx.Y.shape })
   }
 }
 

@@ -1,4 +1,5 @@
 import type { Backend, BufferRef, Linear, Programm, RAWBUFFER, UOp } from "./types";
+import { DEBUG } from "./debug";
 
 import { uop } from "./uops";
 
@@ -241,6 +242,7 @@ const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
 const mkKernel = (d:GPUDevice, {srcs:graph}:Linear) =>{
 
     const compiled = codegen(graph)
+    if (DEBUG.get()) console.log(compiled.wgsl)
 
     const seedBuf =
       compiled.randCount > 0
@@ -269,7 +271,6 @@ const mkKernel = (d:GPUDevice, {srcs:graph}:Linear) =>{
       pass.dispatchWorkgroups(compiled.dispatch[0], compiled.dispatch[1], compiled.dispatch[2]);
       pass.end();
       d.queue.submit([ce.finish()]);
-      seedBuf?.destroy();
     }
 
     return run
@@ -282,15 +283,24 @@ export const WEBGPU: Backend<WEBGPUBUFFER> = {
   createBuffer,
   createRunner: async (graph: Programm) => {
 
-    let buffers = Array.from(new Set(uop.topo(graph).filter(b=>b.op == "BUFFER")))
+    const buffers = new Map<number, BufferRef>();
+    uop.topo(graph)
+      .filter((b): b is BufferRef => b.op == "BUFFER")
+      .forEach((b) => { if (!buffers.has(b.arg.slot)) buffers.set(b.arg.slot, b); });
     const d = await getDevice();
     let kerns = graph.srcs.map(x=>mkKernel(d,x))
 
     return async (getBind : (ref: BufferRef) => WEBGPUBUFFER) => {
-
-      let gpubuffers = new Map(await Promise.all(buffers.map( async (br)=>[br,  await ensure(getBind(br))] as [BufferRef, GPUBuffer])))
-
-      for (let k of kerns) await k(r=>gpubuffers.get(r)!)
+      const gpubuffers = new Map<number, GPUBuffer>(
+        await Promise.all(
+          Array.from(buffers.entries()).map(async ([slot, br]) => [slot, await ensure(getBind(br))] as [number, GPUBuffer])
+        )
+      );
+      for (let k of kerns) await k((r) => {
+        const g = gpubuffers.get(r.arg.slot);
+        if (!g) throw new Error(`GPU buffer slot ${r.arg.slot} not bound`);
+        return g;
+      })
     };
   },
 };
