@@ -30,10 +30,14 @@ export type Rand = Tagged<"RAND", [UOp] | [], {seed:number, size:number}>
 
 type highUOP = BufferRef | Linear | Programm | Kernel | Rand
 
-export const mkUop = <OP extends highUOP['op'] > (op:OP, srcs: ((highUOP & {op:OP})['srcs']), arg?:(highUOP & {op:OP})['arg'])  => ({op, srcs, arg})  as (highUOP & {op:OP})
+export const mkUop = <OP extends UOp["op"]>(
+  op: OP,
+  srcs: Extract<UOp, { op: OP }>["srcs"],
+  rest?: Omit<Extract<UOp, { op: OP }>, "op" | "srcs">
+) => ({op, srcs, ...(rest ?? {})}) as Extract<UOp, { op: OP }>
 
 let slotcount = 0
-export const mkBuffer = (size:number) => mkUop("BUFFER", [], {size, slot: slotcount ++ })
+export const mkBuffer = (size:number) => mkUop("BUFFER", [], {arg: {size, slot: slotcount ++ }})
 
 export type UOpKind <OP extends UOp["op"]> = UOp & {op: OP}
 
@@ -76,7 +80,10 @@ export type UOp = {
   srcs: [UOp],
   keep: number[]
 } | {
-  op: BinOp
+  op: "ADD"
+  srcs: [UOp, UOp]
+} | {
+  op: "MUL"
   srcs: [UOp, UOp]
 } | {
   op: "RESHAPE" | "EXPAND" | "PERMUTE"

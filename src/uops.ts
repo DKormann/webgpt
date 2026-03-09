@@ -1,56 +1,7 @@
-import type { BinOp, UOp, View } from "./types";
-
-let _nextRangeId = 1;
-
-let bin =  (op:BinOp) => (a:UOp, b:UOp):UOp => ({op, srcs: [a,b]})
+import type { UOp } from "./types";
 
 export const uop
-// : Record <string, (...args: any[]) => UOp>
 = {
-  bin, add: bin("ADD"), mul: bin("MUL"),
-  buffer: (slot: number, size: number): UOp & { op: "BUFFER" } => ({ op: "BUFFER", srcs: [], arg: { slot, size } }),
-
-  range : (max:number):UOp & {op:"RANGE"} => ({op:"RANGE", srcs:[], id:_nextRangeId++, max}),
-  endrange : (range: UOp & {op: "RANGE"}) : UOp & {op:"ENDRANGE"} => ({op:"ENDRANGE", srcs:[range]}),
-
-  const : (...val: number[]): UOp & {op:"CONST"} => ({
-    op: "CONST",
-    val,
-    srcs:[]
-  }),
-
-  defReg : (v:number):UOp => ({
-    op: "DEFINE_REG",
-    srcs:[],
-    default:v
-  }),
-
-
-  view: (src: UOp, views: View[]): UOp & { op: "VIEW" } => ({
-    op: "VIEW",
-    srcs: [src],
-    views
-  }),
-
-  reduce: (src: UOp, bin: BinOp, axis: number[]): UOp & { op: "REDUCE_AXIS" } => ({
-    op: "REDUCE_AXIS",
-    srcs: [src],
-    axis,
-    bin
-  }),
-
-
-  store :  (src: UOp, dest: UOp, index?:UOp) : UOp & {op:"STORE"} =>({
-    op: "STORE",
-    srcs: [
-      src,
-      index ? uop.index(dest, index) : dest
-    ]
-  }),
-
-  noop: (src:UOp): UOp =>({op:"NOOP", srcs:[src]}),
-  index: (buf: UOp, index: UOp): UOp => ({op:"INDEX", srcs:[buf,index]}),
-
   fmt: (u:UOp) : string => {
     const counts = new Map<UOp, number>()
     const walk = (x: UOp) => {
@@ -191,7 +142,36 @@ export const uop
     }
 
     return go(u)
-  }
+  },
 
+  shape: (u: UOp): number[] => {
+    if (u.op === "VIEW") return [...u.views[u.views.length - 1]!.dims]
+    if (u.op === "CONST") return [u.val.length]
+    if (u.op === "BUFFER") return [u.arg.size]
+    if (u.op === "RAND") return [u.arg.size]
+    if (u.op === "RANGE") return [u.max]
+    if (u.op === "SPECIAL") return [u.extent]
+
+    if (u.op === "INDEX") return uop.shape(u.srcs[1])
+
+    if (u.op === "ADD" || u.op === "MUL") return uop.shape(u.srcs[0])
+    if (u.op === "NOOP") return uop.shape(u.srcs[0])
+    if (u.op === "STORE") return uop.shape(u.srcs[1])
+
+    if (u.op === "REDUCE_AXIS") {
+      const s = uop.shape(u.srcs[0])
+      return s.filter((_, i) => !u.axis.includes(i))
+    }
+
+    if (u.op === "RESHAPE" || u.op === "EXPAND" || u.op === "PERMUTE" || u.op === "PAD" || u.op === "SHRINK") {
+      throw new Error(`uop.shape: movement op must be rewritten to VIEW first: ${u.op}`)
+    }
+
+    if (u.op === "KERNEL" || u.op === "LINEAR" || u.op === "PROGRAMM" || u.op === "DEFINE_REG" || u.op === "ENDRANGE" || u.op === "REDUCE") {
+      throw new Error(`uop.shape: unsupported op ${u.op}`)
+    }
+
+    throw new Error(`uop.shape: unknown op ${(u as UOp).op}`)
+  },
 
 }

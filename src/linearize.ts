@@ -68,10 +68,10 @@ export const linearize = (root: KernelUOp): Programm=> {
       uops = [...specials, ...uops.filter((x) => !specials.includes(x as UOpKind<"RANGE">))];
     }else{
 
-      let defreg:UOp = uop.defReg(reducer.bin == "ADD" ? 0 : 1)
-      let increg :UOp = {op:reducer.bin, srcs: [defreg, reducer.srcs[0]]}
-      let accreg:UOp = uop.store(increg, defreg)
-      let usereg:UOp = uop.noop(defreg)
+      let defreg:UOp = mkUop("DEFINE_REG", [], {default: reducer.bin == "ADD" ? 0 : 1})
+      let increg :UOp = mkUop(reducer.bin, [defreg, reducer.srcs[0]])
+      let accreg:UOp = mkUop("STORE", [increg, defreg])
+      let usereg:UOp = mkUop("NOOP", [defreg])
       replace(reducer, usereg)
 
       const ranges = uops.filter((x): x is UOpKind<"RANGE"> => x.op == "RANGE");
@@ -94,7 +94,7 @@ export const linearize = (root: KernelUOp): Programm=> {
         ...uops.filter(x=> x.op != "RANGE" && !loopbody.has(x) && !loopafter.has(x)),
         ...uops.filter(x=>loopbody.has(x)),
         increg, accreg,
-        ...loops.reverse().map(l=>uop.endrange(l as UOpKind<"RANGE">)),
+        ...loops.reverse().map(l=>mkUop("ENDRANGE", [l as UOpKind<"RANGE">])),
         ...loopafter
       ]
     }
@@ -107,6 +107,6 @@ export const linearize = (root: KernelUOp): Programm=> {
       replace(range, {op: "SPECIAL", srcs:[], extent: range.max, axis: i as 0|1|2, block, thread})
     });
 
-    return mkUop("LINEAR", uops)
-  }))
+    return mkUop("LINEAR", uops, {arg:undefined})
+  }), {arg:undefined})
 };

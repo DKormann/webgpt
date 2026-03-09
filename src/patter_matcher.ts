@@ -27,9 +27,10 @@ export class PatternMatcher {
       found = false
       for (let [pat,fn] of this.pats){
         let go = (u:UOp):UOp=>{
+          u = {...u,srcs : u.srcs.map(go)} as UOp;
           (r=>{if (r){found=true; u = r}})
           ((c=>c && fn(c))(pat.match(u)))
-          return {...u, srcs: u.srcs.map(go)} as UOp
+          return u
         }
         graph = go(graph)
       }

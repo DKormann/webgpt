@@ -1,8 +1,10 @@
 import { stridesFor } from "./helpers";
-import { mkBuffer, type BufferRef, type Kernel, type UOp, type UOpKind, type View } from "./types";
+import { mkBuffer, mkUop, type Kernel, type UOp, type UOpKind, type View } from "./types";
 import { uop } from "./uops";
 
 type Range = UOpKind<"RANGE">
+let nextRangeId = 1
+const mkRange = (max:number):Range => mkUop("RANGE", [], {id: nextRangeId++, max})
 
 
 const indexView = (v: View[], buf: UOp, rngs:Range[]) : UOp =>{
@@ -10,15 +12,15 @@ const indexView = (v: View[], buf: UOp, rngs:Range[]) : UOp =>{
   if (v[0].dims.length != rngs.length) throw new Error ("VIEW missmatch")
   const view = v[0];
 
-  let idx: UOp = uop.const(0);
+  let idx: UOp = mkUop("CONST", [], {val:[0]});
   for (let i = 0; i < rngs.length; i++) {
     const r = rngs[i];
     const s = view.strides[i] ?? 0;
-    const term = s === 1 ? r : uop.mul(r, uop.const(s));
-    idx = i === 0 ? term : uop.add(idx, term);
+    const term = s === 1 ? r : mkUop("MUL", [r, mkUop("CONST", [], {val:[s]})]);
+    idx = i === 0 ? term : mkUop("ADD", [idx, term]);
   }
 
-  return uop.index(buf, idx);
+  return mkUop("INDEX", [buf, idx]);
 }
 
 export const lowerer = (graph: Kernel): UOpKind<"KERNEL"> =>{
@@ -38,16 +40,16 @@ export const lowerer = (graph: Kernel): UOpKind<"KERNEL"> =>{
     if (u.op == "VIEW"){
       let {views : [v0], srcs:[s]} = u;
       if (rngs == null){
-        rngs = v0.dims.map(uop.range)
+        rngs = v0.dims.map(mkRange)
       }
       return [indexView(u.views, s as UOp & {size:number}, rngs),rngs]
     }
 
     if (u.op =="BUFFER" || u.op == "RAND"){
       let size = u.arg.size;
-      if (rngs == null) rngs = [uop.range(size)]
+      if (rngs == null) rngs = [mkRange(size)]
       if (rngs.length > 1 || rngs[0].max != size) throw new Error("wrong ranges")
-      return  [u.op == "RAND" ? {...u, srcs: [rngs[0] ] } : uop.index(u, rngs[0]), rngs]
+      return  [u.op == "RAND" ? {...u, srcs: [rngs[0] ] } : mkUop("INDEX", [u, rngs[0]]), rngs]
     }
 
 
@@ -65,7 +67,7 @@ export const lowerer = (graph: Kernel): UOpKind<"KERNEL"> =>{
       let {srcs:[c]} = u;
       let [k,rs] = rangify(c)
       let dims = rs.map(r=>r.max)
-      let st = uop.store(k, indexView([{dims, "strides": stridesFor(dims)}], mkBuffer(u.arg.size), rs))
+      let st = mkUop("STORE", [k, indexView([{dims, "strides": stridesFor(dims)}], mkBuffer(u.arg.size), rs)])
       u = {...u, srcs:[st]}
     }
     return {...u, srcs:u.srcs.map(go)} as UOp
