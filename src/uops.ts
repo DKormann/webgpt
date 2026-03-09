@@ -145,7 +145,7 @@ export const uop
   },
 
   shape: (u: UOp): number[] => {
-    if (u.op === "VIEW") return [...u.views[u.views.length - 1]!.dims]
+    if (u.op === "VIEW") return [...u.views[0]!.dims]
     if (u.op === "CONST") return [u.val.length]
     if (u.op === "BUFFER") return [u.arg.size]
     if (u.op === "RAND") return [u.arg.size]

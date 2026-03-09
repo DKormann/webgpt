@@ -5,24 +5,10 @@ import { numel, stridesFor } from "./helpers";
 import { uop } from "./uops";
 
 
-
-export const findSize = (g:UOp):number=>{
-  if ("size" in g) return g.size as number
-  if ("arg" in g && ("size" in g.arg!)) return g.arg.size as number
-  if (g.op == "CONST") return g.val.length
-  if (g.srcs.length == 0) throw new Error("cannot find size" + uop.fmt(g))
-  return findSize(g.srcs[0] as UOp)
-}
-
-
-
-
-
-export const mkKernel = (g:UOp):UOp => mkUop("KERNEL", [g], {arg:{size:findSize(g)}})
+export const mkKernel = (g:UOp):UOp => mkUop("KERNEL", [g], {arg:{size:numel(uop.shape(g))}})
 
 let pm = new PatternMatcher([
   [new UPat("r", "RESHAPE", [new UPat("x")]), ({r, x}) => {
-
     let olddims = uop.shape(x)
     let shape = (r as UOpKind<"RESHAPE">).shape
     if (numel(olddims) != numel(shape)) throw new Error("RESHAPE numel mismatch")
