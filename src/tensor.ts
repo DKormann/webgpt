@@ -4,30 +4,32 @@ import { kernelize } from "./kernelize";
 import { linearize, schedule_fmt } from "./linearize";
 import { lowerer } from "./lowerer";
 import { WEBGPU } from "./webgpu";
-import { numel, stridesFor } from "./helpers";
+import { asShape, numel, stridesFor } from "./helpers";
 import { DEBUG } from "./debug";
 
 export type Raw = number | Raw[];
 export type RuntimeName = "js" | "webgpu";
 
-type Tensor = RAWBUFFER & {shape: number[]}
+type Tensor = {
+  shape: number[],
+  buf:RAWBUFFER,
+  read:()=>Promise<Raw>,
+}
 type TensorFun = (...xs:Tensor[]) => Promise<Tensor>
-
 
 
 export const Tensor = {
   rand : (shape: number[])=> compile(()=>TensorVar.rand(shape))()
-
 }
-  
+
 
 export class TensorVar {
 
   constructor(public uop:UOp, public shape: number[]){}
 
-  static rand = (shape:number[]) => new TensorVar(mkUop("RAND", [], {arg:{size:numel(shape), seed: 0}}), shape)
+  static rand = (shape:number[]) => new TensorVar(mkUop("RAND", [], {size:numel(shape), seed: 0}), shape, [])
 
-  static const = (val: number[]) => new TensorVar(mkUop("CONST", [], {val}), [val.length])
+  static const = (val: number[]) => new TensorVar(mkUop("CONST", [], val), [val.length], [])
 
   static broadcastShape = (a: number[], b: number[]): number[] => {
     const n = Math.max(a.length, b.length)
@@ -52,7 +54,7 @@ export class TensorVar {
     const shape = TensorVar.broadcastShape(a.shape, b.shape)
     a = TensorVar.broadcastTo(a, shape)
     b = TensorVar.broadcastTo(b, shape)
-    return new TensorVar(mkUop(op, [a.uop,b.uop]), shape)
+    return new TensorVar(mkUop(op, [a.uop,b.uop], undefined), shape, [a,b])
   }
   mul = (other:TensorVar) => TensorVar.bin("MUL", this, other)
   add = (other:TensorVar) => TensorVar.bin("ADD", this, other)
@@ -61,9 +63,34 @@ export class TensorVar {
     return new TensorVar(mkUop("REDUCE_AXIS", [this.uop], {bin: "ADD", axis: dims}), this.shape.filter((d,i)=>!dims.includes(i)))
   }
 
-  permute = (dims:number[]) => new TensorVar({op:"PERMUTE", shape: dims, srcs:[this.uop], }, dims.map(d=>this.shape[d]))
-  reshape = (shape: number[]) => new TensorVar({op: "RESHAPE", shape, srcs:[this.uop]}, shape)
-  expand = (shape:number[]) => new TensorVar({op:"EXPAND", shape, srcs:[this.uop]}, shape)
+  backward = (loss: TensorVar, weights:TensorVar[]) : (TensorVar|null)[] => {
+    let leaves = weights.map(w=>w.uop)
+    let topo:UOp[] = []
+    {
+      let seen = new Map<UOp,boolean>()
+      let go = (u:UOp):boolean =>{
+        if (seen.has(u)) seen.get(u);
+        let k = u.srcs.map(go).some(x=>x) || leaves.includes(u);
+        seen.set(u,k)
+        if (k) topo.push(u)
+        return k
+      }
+      go(loss.uop)
+    }
+    let grads = new Map<UOp,UOp>([[loss.uop, mkUop("CONST", [], [1])]])
+    topo.reverse().forEach(s=>{
+      let g = grads.get(s);
+      if (!g) return
+      let rg = uop.reverse(s, g)
+      s.srcs.forEach((s,i)=> grads.set(s, grads.get(s)?uop.add(grads.get(s)!, rg[i]):rg[i]))
+    })
+    return weights.map(w=> grads.get(w.uop) ? new TensorVar(grads.get(w.uop)!, w.shape) : null)
+  }
+
+
+  permute = (dims:number[]) => new TensorVar(mkUop("PERMUTE", [this.uop], {shape: dims}), dims.map(d=>this.shape[d]))
+  reshape = (shape: number[]) => new TensorVar(mkUop("RESHAPE", [this.uop], {shape}), shape)
+  expand = (shape:number[]) => new TensorVar(mkUop("EXPAND", [this.uop], {shape}), shape)
   matmul = (other: TensorVar) => {
     let [K,V] = this.shape
     let [V_, W] = other.shape
@@ -83,12 +110,12 @@ export function compile  (fn: (...args:TensorVar[])=>TensorVar): TensorFun {
   return async (...xs:Tensor[]) =>{
 
     if (ctx == null){
-      let inbuffs: BufferRef[] = xs.map(x=>mkBuffer(x.size))
+      let inbuffs: BufferRef[] = xs.map(x=>mkBuffer(x.buf.size))
       let X = xs.map((x, i)=>({shape:x.shape, buffer:inbuffs[i]}))
 
       let invars = inbuffs.map((b,i)=>{
         const shape = xs[i].shape
-        return new TensorVar(mkUop("VIEW", [b], {views:[{dims: shape, strides: stridesFor(shape)}]}), shape)
+        return new TensorVar(mkUop("VIEW", [b], {views:[{dims: shape, strides: stridesFor(shape)}]}), shape, [])
       })
       let graph = fn(...invars)
 
@@ -124,29 +151,13 @@ export function compile  (fn: (...args:TensorVar[])=>TensorVar): TensorFun {
     await ctx.runner((ref)=>{
       let inin = ctx!.X.findIndex(x=>x.buffer.arg.slot == ref.arg.slot)
       let res: RAWBUFFER;
-      if (inin>=0) res = xs[inin]
+      if (inin>=0) res = xs[inin].buf
       else if (ref.arg.slot == ctx!.Y.buffer.arg.slot) res = out
       else res = ctx!.temp.get(ref.arg.slot)!
       if (!res) throw new Error(`BUFFER ${ref.arg.slot} not found`)
       return res
     })
-    return Object.assign(out, { shape: ctx.Y.shape })
+
+    return {shape:ctx.Y.shape,buf: out, read: async ()=> out.read().then(d=>asShape(ctx!.Y.shape,d))}
   }
-}
-
-function main(){
-  let fn = compile((a,b)=>{
-
-    let [K,L] = a.shape
-    let [M,N] = b.shape
-    if (M!=L) throw new Error(`shapes dont match`)
-    a = a.reshape([K,L,1]).expand([K,L,N])
-    b = b.reshape([1,L,N]).expand([K,L,N])
-    let res = a.mul(b).sum([1])
-    return res
-  })
-
-  let rand = compile(()=>TensorVar.rand([2,2]))
-  let t = rand()
-
 }

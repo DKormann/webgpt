@@ -1,3 +1,4 @@
+import { asShape } from "../helpers";
 import { compile, Tensor } from "../tensor";
 
 
@@ -12,3 +13,4 @@ let res = await f(x)
 
 console.log(res.shape)
 console.log(await res.read())
+

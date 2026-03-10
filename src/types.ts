@@ -28,85 +28,44 @@ export type Kernel = Tagged<"KERNEL", [UOp], {size:number}>
 export type Rand = Tagged<"RAND", [UOp] | [], {seed:number, size:number}>
 
 
-type highUOP = BufferRef | Linear | Programm | Kernel | Rand
 
 export const mkUop = <OP extends UOp["op"]>(
   op: OP,
   srcs: Extract<UOp, { op: OP }>["srcs"],
-  rest?: Omit<Extract<UOp, { op: OP }>, "op" | "srcs">
-) => ({op, srcs, ...(rest ?? {})}) as Extract<UOp, { op: OP }>
+  arg: Extract<UOp, { op: OP }>["arg"]
+) => ({op, srcs, arg}) as Extract<UOp, { op: OP }>
 
 let slotcount = 0
-export const mkBuffer = (size:number) => mkUop("BUFFER", [], {arg: {size, slot: slotcount ++ }})
+export const mkBuffer = (size:number) => mkUop("BUFFER", [], {size, slot: slotcount ++ })
 
 export type UOpKind <OP extends UOp["op"]> = UOp & {op: OP}
 
+type Store = Tagged<"STORE", [UOp, UOp], undefined>
+type Special = Tagged<"SPECIAL", [], {axis: 0 | 1 | 2, extent: number, block: number, thread: number}>
+type Range = Tagged<"RANGE", [], {id: number, max: number}>
+type EndRange = Tagged<"ENDRANGE", [Range], undefined>
+type Noop = Tagged<"NOOP", [UOp], undefined>
+type Index = Tagged<"INDEX", [UOp, UOp], undefined>
+type ReduceAxis = Tagged<"REDUCE_AXIS", [UOp], {bin: "ADD", axis: number[]}> // sums at axes but keeps the dim as size 1
+type Reduce = Tagged<"REDUCE", [UOp], {bin: "ADD", keep: number[]}> // sums apart from keep but keeps the others as size 1 dim
+type Add = Tagged<"ADD", [UOp, UOp], undefined>
+type Mul = Tagged<"MUL", [UOp, UOp], undefined>
+type Div = Tagged<"DIV", [UOp, UOp], undefined>
+type Mod = Tagged<"MOD", [UOp, UOp], undefined>
+type Reshape = Tagged<"RESHAPE", [UOp], {shape: number[]}>
+type Expand = Tagged<"EXPAND", [UOp], {shape: number[]}>
+type Permute = Tagged<"PERMUTE", [UOp], {shape: number[]}>
+type Pad = Tagged<"PAD", [UOp], {args: [number,number][]}>
+type Shrink = Tagged<"SHRINK", [UOp], {args: [number,number][]}>
+type Const = Tagged<"CONST", [], number[]>
+type ViewUOp = Tagged<"VIEW", [UOp], {views: View[]}>
+type DefineReg = Tagged<"DEFINE_REG", [], {default: number}>
 
-export type UOp = {
-  op: "STORE",
-  srcs: [
-    UOp, // source
-    UOp // destination
-  ]
-} | {
-  op: "SPECIAL"
-  srcs: [],
-  axis: 0 | 1 | 2,
-  extent: number,
-  block: number,
-  thread: number,
-} |highUOP| {
-  op: "RANGE"
-  srcs: [],
-  id: number,
-  max: number
-} | {
-  op: "ENDRANGE",
-  srcs: [UOp & {op: "RANGE"}]
-} | {
-  op: "NOOP",
-  srcs: [UOp]
-} | {
-  op: "INDEX",
-  srcs: [UOp, UOp]
-} | {
-  op: "REDUCE_AXIS",
-  bin: BinOp,
-  srcs: [UOp],
-  axis: number[]
-} | {
-  op: "REDUCE",
-  bin: BinOp,
-  srcs: [UOp],
-  keep: number[]
-} | {
-  op: "ADD"
-  srcs: [UOp, UOp]
-} | {
-  op: "MUL"
-  srcs: [UOp, UOp]
-} | {
-  op: "RESHAPE" | "EXPAND" | "PERMUTE"
-  srcs: [UOp]
-  shape: number[]
-} | {
-  op: "PAD" | "SHRINK"
-  srcs: [UOp]
-  args: [number,number] []
-} | {
-  op: "CONST",
-  srcs: [],
-  val: number[],
-} | {
-  op: "VIEW",
-  srcs: [UOp],
-  views: View[]
-} | {
-  op: "DEFINE_REG"
-  srcs:[]
-  default: number
-}
-
+export type UOp = BufferRef | Linear | Programm | Kernel
+ | Rand
+ | Store | Special | Range | EndRange | Noop | Index | ReduceAxis
+ | Reduce | Add | Mul | Div | Mod
+ | Reshape | Expand | Permute | Pad | Shrink | Const | ViewUOp | DefineReg
 
 
 export type Op = UOp["op"]

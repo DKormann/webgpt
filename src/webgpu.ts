@@ -132,7 +132,7 @@ const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
     if (u.op == "RAND") return "f32";
     if (u.op == "SPECIAL") return "u32";
     if (u.op == "DEFINE_REG") return "f32";
-    if (u.op == "ADD" || u.op == "MUL") return gettype(u.srcs[0]) 
+    if (u.op == "ADD" || u.op == "MUL" || u.op == "DIV" || u.op == "MOD") return gettype(u.srcs[0]) 
     return "UNK DTYPE"
   }
 
@@ -140,6 +140,8 @@ const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
     if (u.op == "DEFINE_REG") addreg("0", u)
     else if (u.op == "ADD") addbin("+", u)
     else if (u.op == "MUL") addbin("*", u)
+    else if (u.op == "DIV") addbin("/", u)
+    else if (u.op == "MOD") addbin("%", u)
     else if (u.op == "INDEX") names.set(u, `${names.get(u.srcs[0])}[${names.get(u.srcs[1])}]`)
     else if (u.op == "RAND") {
       const ri = randIx.get(u);
@@ -147,9 +149,9 @@ const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
       addreg(`randf(seeds[${ri}u] ^ ${names.get(u.srcs[0]!) ?? "0u"})`, u)
     }
     else if (u.op == "BUFFER") names.set(u,`b${buffers.indexOf(u)}`)
-    else if (u.op == "CONST") names.set(u, String(u.val[0]))
+    else if (u.op == "CONST") names.set(u, String(u.arg.val[0]))
     else if (u.op == "RANGE") {
-      lines.push(`for (var r = 0u; r < ${u.max}; r ++){`)
+      lines.push(`for (var r = 0u; r < ${u.arg.max}; r ++){`)
       addreg('r', u)
     }
     else if (u.op == "STORE"){
@@ -159,7 +161,7 @@ const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
     }else if (u.op == "NOOP") names.set(u, names.get(u.srcs[0])!)
     else if (u.op == "ENDRANGE") lines.push("}")
 
-    else if (u.op == "SPECIAL") names.set(u, `${gid[u.axis]}`)
+    else if (u.op == "SPECIAL") names.set(u, `${gid[u.arg.axis]}`)
     else if ( u.op == "KERNEL") return
     else return lines.push(u.op)
 
@@ -169,11 +171,11 @@ const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
 
 
   const needRand = rands.length > 0;
-  const guard = specials.map((u) => `${gid[u.axis]} >= ${u.extent}u`).join(" || ");
+  const guard = specials.map((u) => `${gid[u.arg.axis]} >= ${u.arg.extent}u`).join(" || ");
   const threadExt = [1, 1, 1] as [number, number, number];
-  for (const s0 of specials) threadExt[s0.axis] = s0.thread;
+  for (const s0 of specials) threadExt[s0.arg.axis] = s0.arg.thread;
   const dispatch: [number, number, number] = [1, 1, 1];
-  for (const s0 of specials) dispatch[s0.axis] = Math.max(1, s0.block);
+  for (const s0 of specials) dispatch[s0.arg.axis] = Math.max(1, s0.arg.block);
 
   return {
     buffers,

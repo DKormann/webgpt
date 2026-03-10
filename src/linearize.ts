@@ -68,14 +68,14 @@ export const linearize = (root: KernelUOp): Programm=> {
       uops = [...specials, ...uops.filter((x) => !specials.includes(x as UOpKind<"RANGE">))];
     }else{
 
-      let defreg:UOp = mkUop("DEFINE_REG", [], {default: reducer.bin == "ADD" ? 0 : 1})
-      let increg :UOp = mkUop(reducer.bin, [defreg, reducer.srcs[0]])
-      let accreg:UOp = mkUop("STORE", [increg, defreg])
-      let usereg:UOp = mkUop("NOOP", [defreg])
+      let defreg:UOp = mkUop("DEFINE_REG", [], {default: reducer.arg.bin == "ADD" ? 0 : 1})
+      let increg :UOp = mkUop(reducer.arg.bin, [defreg, reducer.srcs[0]], undefined)
+      let accreg:UOp = mkUop("STORE", [increg, defreg], undefined)
+      let usereg:UOp = mkUop("NOOP", [defreg], undefined)
       replace(reducer, usereg)
 
       const ranges = uops.filter((x): x is UOpKind<"RANGE"> => x.op == "RANGE");
-      specials = ranges.filter(r=>reducer.keep.includes(r.id));
+      specials = ranges.filter(r=>reducer.arg.keep.includes(r.arg.id));
       const loops = ranges.filter(r=>!specials.includes(r));
       specials.forEach((r, i) => replace(r, specials[i]));
 
@@ -94,7 +94,7 @@ export const linearize = (root: KernelUOp): Programm=> {
         ...uops.filter(x=> x.op != "RANGE" && !loopbody.has(x) && !loopafter.has(x)),
         ...uops.filter(x=>loopbody.has(x)),
         increg, accreg,
-        ...loops.reverse().map(l=>mkUop("ENDRANGE", [l as UOpKind<"RANGE">])),
+        ...loops.reverse().map(l=>mkUop("ENDRANGE", [l as UOpKind<"RANGE">], undefined)),
         ...loopafter
       ]
     }
@@ -102,11 +102,11 @@ export const linearize = (root: KernelUOp): Programm=> {
     if (specials.length>3) throw new Error("not implemented")
     const threadsPerDim = [128, 64, 16][specials.length] ?? 128
     specials.forEach((range: UOpKind<"RANGE">, i) => {
-      const thread = Math.max(1, Math.min(range.max, threadsPerDim));
-      const block = Math.max(1, Math.ceil(range.max / thread));
-      replace(range, {op: "SPECIAL", srcs:[], extent: range.max, axis: i as 0|1|2, block, thread})
+      const thread = Math.max(1, Math.min(range.arg.max, threadsPerDim));
+      const block = Math.max(1, Math.ceil(range.arg.max / thread));
+      replace(range, mkUop("SPECIAL", [], {extent: range.arg.max, axis: i as 0|1|2, block, thread}))
     });
 
-    return mkUop("LINEAR", uops, {arg:undefined})
-  }), {arg:undefined})
+    return mkUop("LINEAR", uops, undefined)
+  }), undefined)
 };

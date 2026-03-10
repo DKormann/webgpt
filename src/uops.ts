@@ -1,4 +1,4 @@
-import type { UOp } from "./types";
+import { BinOp, mkUop, UOp } from "./types";
 
 export const uop
 = {
@@ -42,6 +42,25 @@ export const uop
     return render(u)
   },
 
+  const:(...val:number[])=>mkUop("CONST", [], val),
+  bin: (op: BinOp, a:UOp, b:UOp) => mkUop(op, [a,b], undefined),
+  add: (a:UOp,b:UOp) => uop.bin("ADD", a,b),
+  mul: (a:UOp,b:UOp) => uop.bin("MUL", a,b),
+  reshape: (a:UOp, shape: number[]) => mkUop("RESHAPE", [a], {shape}),
+  permute: (a:UOp, shape: number[]) => mkUop("PERMUTE", [a], {shape}),
+  expand: (a:UOp, shape:number[]) => mkUop("EXPAND", [a], {shape}),
+
+  reverse: (self:UOp, grad:UOp) =>{
+    switch (self.op){
+      case "ADD": return [grad, grad]
+      case "MUL": return self.srcs.reverse().map(s=>uop.mul(s,grad)) 
+      case "RESHAPE": return [uop.reshape(grad, uop.shape(self.srcs[0]))]
+      case "PERMUTE": return [uop.permute(grad, uop.shape(self.srcs[0]).map(self.arg.shape.indexOf).map((x,i)=>x==-1?i:x))]
+      case "REDUCE_AXIS": if (self.arg.bin == "ADD") return [uop.expand(grad, self.arg.axis)]
+      default: throw new Error("backward not implemented for "+ self.op)
+    }
+  },
+
   topo: (u:UOp):UOp[] =>{
     const out: UOp[] = []
     const seen = new Set<UOp>()
@@ -60,6 +79,7 @@ export const uop
     visit(u)
     return out
   },
+
 
   dedup: (u: UOp): UOp => {
     const memo = new Map<UOp, UOp>()
@@ -141,27 +161,25 @@ export const uop
       return out
     }
 
+
     return go(u)
   },
 
   shape: (u: UOp): number[] => {
-    if (u.op === "VIEW") return [...u.views[0]!.dims]
-    if (u.op === "CONST") return [u.val.length]
+    if (u.op === "VIEW") return [...u.arg.views[0]!.dims]
+    if (u.op === "CONST") return [u.arg.length]
     if (u.op === "BUFFER") return [u.arg.size]
     if (u.op === "RAND") return [u.arg.size]
-    if (u.op === "RANGE") return [u.max]
-    if (u.op === "SPECIAL") return [u.extent]
+    if (u.op === "RANGE") return [u.arg.max]
+    if (u.op === "SPECIAL") return [u.arg.extent]
 
     if (u.op === "INDEX") return uop.shape(u.srcs[1])
 
-    if (u.op === "ADD" || u.op === "MUL") return uop.shape(u.srcs[0])
+    if (u.op === "ADD" || u.op === "MUL" || u.op === "DIV" || u.op === "MOD") return uop.shape(u.srcs[0])
     if (u.op === "NOOP") return uop.shape(u.srcs[0])
     if (u.op === "STORE") return uop.shape(u.srcs[1])
 
-    if (u.op === "REDUCE_AXIS") {
-      const s = uop.shape(u.srcs[0])
-      return s.filter((_, i) => !u.axis.includes(i))
-    }
+    if (u.op === "REDUCE_AXIS")  uop.shape(u.srcs[0]).map((d,i)=>u.arg.axis.includes(i) ? 1 : d)
 
     if (u.op === "RESHAPE" || u.op === "EXPAND" || u.op === "PERMUTE" || u.op === "PAD" || u.op === "SHRINK") {
       throw new Error(`uop.shape: movement op must be rewritten to VIEW first: ${u.op}`)
