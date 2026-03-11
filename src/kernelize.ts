@@ -50,6 +50,8 @@ let pm = new PatternMatcher([
 
 export const kernelize = (u:UOp):UOpKind<"KERNEL"> => {
 
+  console.log("KERNELIZE: ", uop.fmt(u))
+
   return mkKernel(pm.match(u)) as UOpKind<"KERNEL">
 
 }

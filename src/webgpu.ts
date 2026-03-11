@@ -132,9 +132,9 @@ const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
     if (u.op == "RAND") return "f32";
     if (u.op == "SPECIAL") return "u32";
     if (u.op == "DEFINE_REG") return "f32";
+    if (u.op == "CONST") return u.arg.dtype == "int32" ? "u32" : "f32";
     if (uop.isbinary(u)) return gettype(u.srcs[0] as UOpKind<BinOp>)
-    // return "UNK DTYPE"
-    throw new Error("don know dtype for"+u)
+    throw new Error("don know dtype for "+u.op)
   }
 
   let binaries : Record<BinOp, string> = {
@@ -147,7 +147,7 @@ const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
 
   graph.forEach(u=>{
     if (u.op == "DEFINE_REG") addreg("0", u)
-    if (Object.hasOwn(binaries, u.op)) addbin(binaries[u.op as BinOp], u)
+    else if (Object.hasOwn(binaries, u.op)) addbin(binaries[u.op as BinOp], u)
     else if (u.op == "INDEX") names.set(u, `${names.get(u.srcs[0])}[${names.get(u.srcs[1])}]`)
     else if (u.op == "RAND") {
       const ri = randIx.get(u);

@@ -4,7 +4,7 @@ import { compile, Tensor, TensorVar } from "../tensor";
 
 let N = 1000
 
-DEBUG.set(0)
+DEBUG.set(1)
 
 let r = await Tensor.rand([N,N])
 
