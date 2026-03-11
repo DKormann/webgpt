@@ -6,11 +6,9 @@ type KernelUOp = UOpKind<"KERNEL">;
 
 export function schedule_fmt (sched:Programm){
   return sched.srcs.map((item)=>"SCHEDULEITEM\n"+ item.srcs.map((u,i)=>`${String(i).padStart(4)}: ${u.op.padEnd(10)}: ${u.srcs.map(x=>item.srcs.indexOf(x)).join(", ").padEnd(10)}:`+
-  ` ${
-    Object.entries(u).map(([k,v])=>(k!="op" && k !="srcs" ? `${k}:${item.srcs.includes(v) ? item.srcs.indexOf(v) : JSON.stringify(v)}`: ''))
-    .filter(x=>x)
-    .join(" ")
-  }`).join("\n"))
+  (u.arg?Object.entries(u.arg).map(([k,v])=>`${k}:${v}`).join(" "):"")
+
+).join("\n"))
   .join("\n")
 }
 

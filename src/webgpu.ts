@@ -1,4 +1,4 @@
-import type { Backend, BufferRef, Linear, Programm, RAWBUFFER, UOp } from "./types";
+import type { Backend, BinOp, BufferRef, Linear, Programm, RAWBUFFER, Tagged, UOp, UOpKind } from "./types";
 import { DEBUG } from "./debug";
 
 import { uop } from "./uops";
@@ -132,16 +132,22 @@ const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
     if (u.op == "RAND") return "f32";
     if (u.op == "SPECIAL") return "u32";
     if (u.op == "DEFINE_REG") return "f32";
-    if (u.op == "ADD" || u.op == "MUL" || u.op == "DIV" || u.op == "MOD") return gettype(u.srcs[0]) 
-    return "UNK DTYPE"
+    if (uop.isbinary(u)) return gettype(u.srcs[0] as UOpKind<BinOp>)
+    // return "UNK DTYPE"
+    throw new Error("don know dtype for"+u)
+  }
+
+  let binaries : Record<BinOp, string> = {
+    "ADD": "+",
+    "MUL": "*",
+    "DIV": "/",
+    "MOD": "%",
+    "IDIV": "/",
   }
 
   graph.forEach(u=>{
     if (u.op == "DEFINE_REG") addreg("0", u)
-    else if (u.op == "ADD") addbin("+", u)
-    else if (u.op == "MUL") addbin("*", u)
-    else if (u.op == "DIV") addbin("/", u)
-    else if (u.op == "MOD") addbin("%", u)
+    if (Object.hasOwn(binaries, u.op)) addbin(binaries[u.op as BinOp], u)
     else if (u.op == "INDEX") names.set(u, `${names.get(u.srcs[0])}[${names.get(u.srcs[1])}]`)
     else if (u.op == "RAND") {
       const ri = randIx.get(u);
@@ -149,26 +155,21 @@ const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
       addreg(`randf(seeds[${ri}u] ^ ${names.get(u.srcs[0]!) ?? "0u"})`, u)
     }
     else if (u.op == "BUFFER") names.set(u,`b${buffers.indexOf(u)}`)
-    else if (u.op == "CONST") names.set(u, String(u.arg.val[0]))
+    else if (u.op == "CONST") names.set(u, String(u.arg.val[0]) + (u.arg.dtype == "int32" ? "u" : ""))
     else if (u.op == "RANGE") {
       lines.push(`for (var r = 0u; r < ${u.arg.max}; r ++){`)
       addreg('r', u)
     }
     else if (u.op == "STORE"){
-
       uop.topo(u.srcs[1]).filter(x=>x.op == "BUFFER").forEach(b=>written.add(b))
       lines.push(`${names.get(u.srcs[1])} = ${names.get(u.srcs[0])};`)
-    }else if (u.op == "NOOP") names.set(u, names.get(u.srcs[0])!)
+    }else if (u.op == "NOOP" || u.op == "AFTER") names.set(u, names.get(u.srcs[0])!)
     else if (u.op == "ENDRANGE") lines.push("}")
 
     else if (u.op == "SPECIAL") names.set(u, `${gid[u.arg.axis]}`)
     else if ( u.op == "KERNEL") return
-    else return lines.push(u.op)
-
+    else throw new Error("undefined codegen for: "+ uop.fmt(u))
   })
-
-
-
 
   const needRand = rands.length > 0;
   const guard = specials.map((u) => `${gid[u.arg.axis]} >= ${u.arg.extent}u`).join(" || ");
@@ -208,6 +209,7 @@ const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
 const mkKernel = (d:GPUDevice, {srcs:graph}:Linear) =>{
 
     const compiled = codegen(graph)
+    
     if (DEBUG.get()) console.log(compiled.wgsl)
 
     const seedBuf =

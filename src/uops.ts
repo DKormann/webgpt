@@ -1,4 +1,5 @@
-import { BinOp, mkUop, UOp } from "./types";
+import { stridesFor } from "./helpers";
+import { BinOp, DTYPE, mkUop, UOp } from "./types";
 
 export const uop
 = {
@@ -19,8 +20,8 @@ export const uop
 
     const head = (x: UOp): string => {
       let h = x.op
-      Object.entries(x).forEach(([k, v]) => {
-        if (!["srcs", "op", "seed"].includes(k)) h += ` ${k}:${JSON.stringify(v)}`
+      if (x.arg) Object.entries(x.arg).forEach(([k, v]) => {
+        h += ` ${k}:${JSON.stringify(v)}`
       })
       return h
     }
@@ -42,13 +43,29 @@ export const uop
     return render(u)
   },
 
-  const:(...val:number[])=>mkUop("CONST", [], val),
-  bin: (op: BinOp, a:UOp, b:UOp) => mkUop(op, [a,b], undefined),
-  add: (a:UOp,b:UOp) => uop.bin("ADD", a,b),
-  mul: (a:UOp,b:UOp) => uop.bin("MUL", a,b),
+  const:(val:number[], dtype?:DTYPE )=>{
+    if (dtype == undefined) dtype = Number.isInteger(val[0]) ? "int32" : "float32"
+    return mkUop("CONST", [], {val, dtype})
+  },
+  bin: (op: BinOp, ...a:(UOp | number)[]) =>{
+    let u = a.map(a=>typeof a == "number" ? uop.const([a]) : a)
+    return u.slice(1).reduce((p,c)=> mkUop(op, [p as UOp, c as UOp]), u[0]) as UOp
+  },
+  add: (...a:(UOp | number)[]) => uop.bin("ADD", ...a),
+
+  mod: (a:(UOp | number), b:(UOp | number), ) => uop.bin("MOD", a,b),
+  div: (a:(UOp | number), b:(UOp | number), ) => uop.bin("DIV", a,b),
+  idiv: (a:(UOp | number), b:(UOp | number), ) => uop.bin("IDIV", a,b),
+  mul: (a:UOp | number,b:UOp | number) => uop.bin("MUL", a,b),
   reshape: (a:UOp, shape: number[]) => mkUop("RESHAPE", [a], {shape}),
   permute: (a:UOp, shape: number[]) => mkUop("PERMUTE", [a], {shape}),
   expand: (a:UOp, shape:number[]) => mkUop("EXPAND", [a], {shape}),
+  buff: (size:number, slot:number) => mkUop("BUFFER", [], {size, slot}),
+  store: (dest: UOp, src: UOp) => mkUop("STORE",[src,dest]),
+  after: (op:UOp, ...deps:UOp[]) => mkUop("AFTER", [op, ...deps]),
+  index: (arr:UOp, i:UOp) => mkUop("INDEX", [arr,i]),
+
+  isbinary : (x:UOp) => ["ADD", "MUL", "DIV", "IDIV", "MOD"].includes(x.op),
 
   reverse: (self:UOp, grad:UOp) =>{
     switch (self.op){
@@ -57,7 +74,9 @@ export const uop
       case "RESHAPE": return [uop.reshape(grad, uop.shape(self.srcs[0]))]
       case "PERMUTE": return [uop.permute(grad, uop.shape(self.srcs[0]).map(self.arg.shape.indexOf).map((x,i)=>x==-1?i:x))]
       case "REDUCE_AXIS": if (self.arg.bin == "ADD") return [uop.expand(grad, self.arg.axis)]
-      default: throw new Error("backward not implemented for "+ self.op)
+      default:
+        if (self.srcs.length == 0) return []
+        throw new Error("backward not implemented for "+ self.op)
     }
   },
 
@@ -80,6 +99,7 @@ export const uop
     return out
   },
 
+  map: (u:UOp, fn:(u:UOp)=>UOp):UOp => fn({...u, srcs: u.srcs.map(x=>uop.map(x,fn))} as UOp),
 
   dedup: (u: UOp): UOp => {
     const memo = new Map<UOp, UOp>()
@@ -167,7 +187,7 @@ export const uop
 
   shape: (u: UOp): number[] => {
     if (u.op === "VIEW") return [...u.arg.views[0]!.dims]
-    if (u.op === "CONST") return [u.arg.length]
+    if (u.op === "CONST") return [u.arg.val.length]
     if (u.op === "BUFFER") return [u.arg.size]
     if (u.op === "RAND") return [u.arg.size]
     if (u.op === "RANGE") return [u.arg.max]
@@ -191,5 +211,15 @@ export const uop
 
     throw new Error(`uop.shape: unknown op ${(u as UOp).op}`)
   },
-
 }
+
+export const flattenIndex = (index:UOp[], shape:number[]) =>{
+  let strides = stridesFor(shape)
+  return uop.add(...index.map((x,i)=>uop.mul(x,strides[i]))) 
+}
+
+export const unFlattenIndex = (index:UOp, shape: number[])=>{
+  let strides = stridesFor(shape);
+  return strides.map((st,i)=> uop.idiv(uop.mod(index, shape[i]*st), st))
+}
+

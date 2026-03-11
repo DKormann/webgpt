@@ -1,47 +1,33 @@
 import { stridesFor } from "./helpers";
 import { mkBuffer, mkUop, type Kernel, type UOp, type UOpKind, type View } from "./types";
-import { uop } from "./uops";
+import { unFlattenIndex, uop } from "./uops";
 
 type Range = UOpKind<"RANGE">
 let nextRangeId = 1
 const mkRange = (max:number):Range => mkUop("RANGE", [], {id: nextRangeId++, max})
-const c = (x:number) => mkUop("CONST", [], [x])
+const c = (x:number) => uop.const([x])
 
 
-const indexView = (v: View[], buf: UOp, rngs:Range[]) : UOp =>{
-  if (v[0].dims.length != rngs.length) throw new Error ("VIEW missmatch")
 
-  let idxs: UOp[] = [...rngs]
-  let flat: UOp = mkUop("MUL", [rngs[0]!, c(0)], undefined)
 
-  const mkFlat = (view: View, ls: UOp[]) => {
-    let idx: UOp | null = null
-    for (let i = 0; i < ls.length; i++) {
-      const s = view.strides[i] ?? 0
-      if (s === 0) continue
-      const term = s === 1 ? ls[i] : mkUop("MUL", [ls[i], c(s)], undefined)
-      idx = idx == null ? term : mkUop("ADD", [idx, term], undefined)
-    }
-    return idx ?? mkUop("MUL", [ls[0]!, c(0)], undefined)
-  }
 
-  for (let i = 0; i < v.length; i++) {
-    const view = v[i]
-    if (view.dims.length != idxs.length) throw new Error("VIEW rank mismatch in stack")
-    flat = mkFlat(view, idxs)
-    if (i + 1 == v.length) break
-    const nd = v[i + 1]!.dims
-    const ns = stridesFor(nd)
-    idxs = nd.map((d, j) => {
-      const q = ns[j] === 1 ? flat : mkUop("DIV", [flat, c(ns[j]!)], undefined)
-      return d === 1 ? mkUop("MUL", [q, c(0)], undefined) : mkUop("MOD", [q, c(d)], undefined)
-    })
-  }
+const indexView = (views: View[], buf: UOp, rngs:Range[]) : UOp =>{
+  if (rngs.length == 0) rngs = [mkRange(1)]
+  if (views.length == 0) throw new Error("NO VIEW")
+  let indexes:UOp[] = rngs
+  let res:UOp | undefined = undefined;
+  views.forEach((view,i) =>{
 
-  return mkUop("INDEX", [buf, flat], undefined);
+    res = uop.add(...indexes.map((x,i)=>uop.mul(x,view.strides[i]))) 
+    if (views[i+1]) indexes = unFlattenIndex(res, views[i+1].dims)
+  })
+  if (res == undefined) throw new Error("no index")
+
+  return uop.index(buf, res!)
 }
 
 export const lowerer = (graph: Kernel): UOpKind<"KERNEL"> =>{
+  console.log("LOWER",uop.fmt(graph))
   let rangify = (u:UOp, rngs: Range[] | null = null) : [UOp, Range[]] =>{
     if (u.op == "REDUCE_AXIS"){
       let {arg:{axis, bin}, srcs: [ch]} = u;
@@ -57,14 +43,20 @@ export const lowerer = (graph: Kernel): UOpKind<"KERNEL"> =>{
       }
       return [indexView(u.arg.views, s as UOp & {size:number}, rngs),rngs]
     }
-
+    if (u.op == "CONST"){
+      if (u.arg.val.length > 1){
+        if (rngs == null) rngs = [mkRange(u.arg.val.length)]
+        if (rngs.length > 1 || rngs[0].arg.max != u.arg.val.length) throw new Error("wrong ranges")
+        return [uop.index(u, rngs[0]), rngs]
+      }
+      return [u, []]
+    }
     if (u.op =="BUFFER" || u.op == "RAND"){
       let size = u.arg.size;
       if (rngs == null) rngs = [mkRange(size)]
       if (rngs.length > 1 || rngs[0].arg.max != size) throw new Error("wrong ranges")
       return  [u.op == "RAND" ? {...u, srcs: [rngs[0] ] } : mkUop("INDEX", [u, rngs[0]], undefined), rngs]
     }
-
 
     if (u.op== "ADD" || u.op == "MUL" || u.op == "DIV" || u.op == "MOD") {
       let {srcs: [a,b]} = u
@@ -76,13 +68,20 @@ export const lowerer = (graph: Kernel): UOpKind<"KERNEL"> =>{
   }
 
   let go = (u:UOp):UOp => {
+    console.log((u))
     if (u.op == "KERNEL"){
       let {srcs:[c]} = u;
-      let [k,rs] = rangify(c)
+      let [data,rs] = rangify(c)
       let dims = rs.map(r=>r.arg.max)
-      let st = mkUop("STORE", [k, indexView([{dims, "strides": stridesFor(dims)}], mkBuffer(u.arg.size), rs)], undefined)
+      let st = mkUop("STORE", [data, indexView([{dims, "strides": stridesFor(dims)}], mkBuffer(u.arg.size), rs)], undefined)
       u = {...u, srcs:[st]}
     }
+    if (u.op == "CONST" && u.arg.val.length>1){
+      let buf = mkBuffer(u.arg.val.length)
+      let ass = u.arg.val.map((c,i)=> uop.store(uop.index(buf, uop.const([i])), uop.const([c])))
+      u = uop.after(buf, ...ass)
+    }
+
     return {...u, srcs:u.srcs.map(go)} as UOp
   }
   

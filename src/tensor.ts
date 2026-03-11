@@ -27,9 +27,8 @@ export class TensorVar {
 
   constructor(public uop:UOp, public shape: number[]){}
 
-  static rand = (shape:number[]) => new TensorVar(mkUop("RAND", [], {size:numel(shape), seed: 0}), shape, [])
-
-  static const = (val: number[]) => new TensorVar(mkUop("CONST", [], val), [val.length], [])
+  static rand = (shape:number[]) => new TensorVar(mkUop("RAND", [], {size:numel(shape), seed: 0}), shape)
+  static const = (val: number[]) => new TensorVar(uop.const(val, "float32"), [val.length])
 
   static broadcastShape = (a: number[], b: number[]): number[] => {
     const n = Math.max(a.length, b.length)
@@ -54,7 +53,7 @@ export class TensorVar {
     const shape = TensorVar.broadcastShape(a.shape, b.shape)
     a = TensorVar.broadcastTo(a, shape)
     b = TensorVar.broadcastTo(b, shape)
-    return new TensorVar(mkUop(op, [a.uop,b.uop], undefined), shape, [a,b])
+    return new TensorVar(mkUop(op, [a.uop,b.uop], undefined), shape)
   }
   mul = (other:TensorVar) => TensorVar.bin("MUL", this, other)
   add = (other:TensorVar) => TensorVar.bin("ADD", this, other)
@@ -77,7 +76,8 @@ export class TensorVar {
       }
       go(loss.uop)
     }
-    let grads = new Map<UOp,UOp>([[loss.uop, mkUop("CONST", [], [1])]])
+    // let grads = new Map<UOp,UOp>([[loss.uop, mkUop("CONST", [], [1])]])
+    let grads = new Map<UOp,UOp>([[loss.uop, uop.const([1.0])]])
     topo.reverse().forEach(s=>{
       let g = grads.get(s);
       if (!g) return
@@ -86,7 +86,6 @@ export class TensorVar {
     })
     return weights.map(w=> grads.get(w.uop) ? new TensorVar(grads.get(w.uop)!, w.shape) : null)
   }
-
 
   permute = (dims:number[]) => new TensorVar(mkUop("PERMUTE", [this.uop], {shape: dims}), dims.map(d=>this.shape[d]))
   reshape = (shape: number[]) => new TensorVar(mkUop("RESHAPE", [this.uop], {shape}), shape)
@@ -115,18 +114,17 @@ export function compile  (fn: (...args:TensorVar[])=>TensorVar): TensorFun {
 
       let invars = inbuffs.map((b,i)=>{
         const shape = xs[i].shape
-        return new TensorVar(mkUop("VIEW", [b], {views:[{dims: shape, strides: stridesFor(shape)}]}), shape, [])
+        return new TensorVar(mkUop("VIEW", [b], {views:[{dims: shape, strides: stridesFor(shape)}]}), shape)
       })
       let graph = fn(...invars)
 
+      let buffers = new Map<number,RAWBUFFER>()
       let kg = kernelize(graph.uop)
       let lg = lowerer(kg)
 
-      let buffers = new Map(
-        uop.topo(lg)
-          .filter((x): x is BufferRef => x.op =="BUFFER")
-          .map(r=>[r.arg.slot, WEBGPU.createBuffer(r.arg.size)] as [number,RAWBUFFER])
-      )
+      uop.topo(lg)
+        .filter((x) => x.op =="BUFFER")
+        .forEach(r=>buffers.set(r.arg.slot, WEBGPU.createBuffer(r.arg.size)))
 
       let sched = linearize(lg)
 

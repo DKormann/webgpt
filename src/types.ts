@@ -1,11 +1,13 @@
 
-export type BinOp = "ADD" | "MUL"
+export type BinOp = "ADD" | "MUL" | "DIV" | "MOD" | "IDIV"
 export type MoveOp = "RESHAPE" | "EXPAND" | "PERMUTE" | "PAD" | "SHRINK"
 
 export type View = {
   dims: number[],
   strides: number[]
 }
+
+export type DTYPE = "int32" | "float32"
 
 export type TensorShape = {
   dims: number[];
@@ -32,8 +34,11 @@ export type Rand = Tagged<"RAND", [UOp] | [], {seed:number, size:number}>
 export const mkUop = <OP extends UOp["op"]>(
   op: OP,
   srcs: Extract<UOp, { op: OP }>["srcs"],
-  arg: Extract<UOp, { op: OP }>["arg"]
-) => ({op, srcs, arg}) as Extract<UOp, { op: OP }>
+  arg?: Extract<UOp, { op: OP }>["arg"]
+) => {
+  // let safs = srcs.map((x) =>(typeof x == "number" ? mkUop("CONST", [], {val:[x], dtype}) :  x)) as Extract<UOp, { op: OP }>["srcs"];
+  srcs.forEach(x=>{if (x==undefined) throw new Error("undefined src " + op)})
+  return ({op, srcs:srcs, arg}) as Extract<UOp, { op: OP }>}
 
 let slotcount = 0
 export const mkBuffer = (size:number) => mkUop("BUFFER", [], {size, slot: slotcount ++ })
@@ -51,21 +56,23 @@ type Reduce = Tagged<"REDUCE", [UOp], {bin: "ADD", keep: number[]}> // sums apar
 type Add = Tagged<"ADD", [UOp, UOp], undefined>
 type Mul = Tagged<"MUL", [UOp, UOp], undefined>
 type Div = Tagged<"DIV", [UOp, UOp], undefined>
+type Idiv = Tagged<"IDIV", [UOp, UOp], undefined>
 type Mod = Tagged<"MOD", [UOp, UOp], undefined>
 type Reshape = Tagged<"RESHAPE", [UOp], {shape: number[]}>
 type Expand = Tagged<"EXPAND", [UOp], {shape: number[]}>
 type Permute = Tagged<"PERMUTE", [UOp], {shape: number[]}>
 type Pad = Tagged<"PAD", [UOp], {args: [number,number][]}>
 type Shrink = Tagged<"SHRINK", [UOp], {args: [number,number][]}>
-type Const = Tagged<"CONST", [], number[]>
+type Const = Tagged<"CONST", [], {val:number[], dtype:DTYPE}>
 type ViewUOp = Tagged<"VIEW", [UOp], {views: View[]}>
 type DefineReg = Tagged<"DEFINE_REG", [], {default: number}>
+type After = Tagged<"AFTER", [UOp, ...UOp[]], undefined>
 
 export type UOp = BufferRef | Linear | Programm | Kernel
  | Rand
  | Store | Special | Range | EndRange | Noop | Index | ReduceAxis
- | Reduce | Add | Mul | Div | Mod
- | Reshape | Expand | Permute | Pad | Shrink | Const | ViewUOp | DefineReg
+ | Reduce | Add | Mul | Div | Mod | Idiv
+ | Reshape | Expand | Permute | Pad | Shrink | Const | ViewUOp | DefineReg | After
 
 
 export type Op = UOp["op"]
