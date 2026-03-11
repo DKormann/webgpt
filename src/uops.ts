@@ -199,7 +199,7 @@ export const uop
     if (u.op === "NOOP") return uop.shape(u.srcs[0])
     if (u.op === "STORE") return uop.shape(u.srcs[1])
 
-    if (u.op === "REDUCE_AXIS")  uop.shape(u.srcs[0]).map((d,i)=>u.arg.axis.includes(i) ? 1 : d)
+    if (u.op === "REDUCE_AXIS") return uop.shape(u.srcs[0]).map((d,i)=>u.arg.axis.includes(i) ? 1 : d)
 
     if (u.op === "RESHAPE" || u.op === "EXPAND" || u.op === "PERMUTE" || u.op === "PAD" || u.op === "SHRINK") {
       throw new Error(`uop.shape: movement op must be rewritten to VIEW first: ${u.op}`)
