@@ -1,4 +1,5 @@
-import { stridesFor } from "./helpers";
+import { DEBUG } from "./debug";
+import { numel, stridesFor, zip } from "./helpers";
 import { PatternMatcher, UPat } from "./patter_matcher";
 import { mkBuffer, mkUop, type Kernel, type UOp, type UOpKind, type View } from "./types";
 import { unFlattenIndex, uop } from "./uops";
@@ -30,12 +31,11 @@ let const_fold = new PatternMatcher([
     if (b.op =="CONST" && b.arg.val[0] == 0 && b.arg.val.length == 1) return a
     return null
   }],
-  
-
 
 ])
 
 const indexView = (views: View[], rngs:Range[]) : UOp =>{
+  
 
   if (rngs.length == 0) rngs = [mkRange(1)]
   if (views.length == 0) throw new Error("NO VIEW")

@@ -30,3 +30,6 @@ export const partition =<T> (ls:T[], f:(t:T)=>boolean):[T[],T[]] =>{
   ls.forEach(x=>(f(x)?a:b).push(x))
   return [a,b]
 }
+
+
+export const zip =<T, U> (s:T[], ...t:U[][]) => s.map((se,i) => [se, ...t.map(x=> x[i])]) as [T,...U[]][]

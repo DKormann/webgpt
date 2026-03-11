@@ -120,6 +120,9 @@ export function compile  (fn: (...args:TensorVar[])=>TensorVar): TensorFun {
 
       let buffers = new Map<number,RAWBUFFER>()
       let kg = kernelize(graph.uop)
+
+
+      if (DEBUG.get()) console.log(`kernel graph:\n${uop.fmt(kg)}`)
       let lg = lowerer(kg)
 
       uop.topo(lg)
@@ -129,7 +132,6 @@ export function compile  (fn: (...args:TensorVar[])=>TensorVar): TensorFun {
       let sched = linearize(lg)
 
       if (DEBUG.get()){
-        console.log(`kernel graph:\n${uop.fmt(kg)}`)
         console.log(`lowered graph:\n${uop.fmt(lg)}`)
         console.log(`schedule graph:\n${schedule_fmt(sched)}`)
       }

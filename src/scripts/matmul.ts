@@ -4,9 +4,11 @@ import { compile, Tensor, TensorVar } from "../tensor";
 
 let N = 1000
 
-DEBUG.set(1)
+DEBUG.set(0)
 
 let r = await Tensor.rand([N,N])
+
+DEBUG.set(1)
 
 
 let matmul = compile((a)=>a.matmul(a))

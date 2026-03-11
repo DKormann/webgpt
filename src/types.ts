@@ -23,11 +23,6 @@ export type Tagged <Tag extends string, SRC extends UOp[], Arg> = {
   arg: Arg
 }
 
-export type BufferRef = Tagged<"BUFFER", [], {size:number, slot:number}>
-export type Linear = Tagged<"LINEAR", UOp[], undefined>
-export type Programm = Tagged<"PROGRAMM", Linear[], undefined>
-export type Kernel = Tagged<"KERNEL", [UOp], {size:number}>
-export type Rand = Tagged<"RAND", [UOp] | [], {seed:number, size:number}>
 
 
 
@@ -43,36 +38,42 @@ export const mkUop = <OP extends UOp["op"]>(
 let slotcount = 0
 export const mkBuffer = (size:number) => mkUop("BUFFER", [], {size, slot: slotcount ++ })
 
-export type UOpKind <OP extends UOp["op"]> = UOp & {op: OP}
 
-type Store = Tagged<"STORE", [UOp, UOp], undefined>
-type Special = Tagged<"SPECIAL", [], {axis: 0 | 1 | 2, extent: number, block: number, thread: number}>
-type Range = Tagged<"RANGE", [], {id: number, max: number}>
-type EndRange = Tagged<"ENDRANGE", [Range], undefined>
-type Noop = Tagged<"NOOP", [UOp], undefined>
-type Index = Tagged<"INDEX", [UOp, UOp], undefined>
-type ReduceAxis = Tagged<"REDUCE_AXIS", [UOp], {bin: "ADD", axis: number[]}> // sums at axes but keeps the dim as size 1
-type Reduce = Tagged<"REDUCE", [UOp], {bin: "ADD", keep: number[]}> // sums apart from keep but keeps the others as size 1 dim
-type Add = Tagged<"ADD", [UOp, UOp], undefined>
-type Mul = Tagged<"MUL", [UOp, UOp], undefined>
-type Div = Tagged<"DIV", [UOp, UOp], undefined>
-type Idiv = Tagged<"IDIV", [UOp, UOp], undefined>
-type Mod = Tagged<"MOD", [UOp, UOp], undefined>
-type Reshape = Tagged<"RESHAPE", [UOp], {shape: number[]}>
-type Expand = Tagged<"EXPAND", [UOp], {shape: number[]}>
-type Permute = Tagged<"PERMUTE", [UOp], {shape: number[]}>
-type Pad = Tagged<"PAD", [UOp], {args: [number,number][]}>
-type Shrink = Tagged<"SHRINK", [UOp], {args: [number,number][]}>
-type Const = Tagged<"CONST", [], {val:number[], dtype:DTYPE}>
-type ViewUOp = Tagged<"VIEW", [UOp], {views: View[]}>
-type DefineReg = Tagged<"DEFINE_REG", [], {default: number}>
-type After = Tagged<"AFTER", [UOp, ...UOp[]], undefined>
+
+export type UOpKind <OP extends UOp["op"]> = UOp & {op: OP}
+export type BufferRef = Tagged<"BUFFER", [], {size:number, slot:number}>
+export type Linear = Tagged<"LINEAR", UOp[], undefined>
+export type Programm = Tagged<"PROGRAMM", Linear[], undefined>
+export type Kernel = Tagged<"KERNEL", [UOp], {size:number}>
+export type Rand = Tagged<"RAND", [UOp] | [], {seed:number, size:number}>
+export type StoreUOp = Tagged<"STORE", [UOp, UOp], undefined>
+export type SpecialUOp = Tagged<"SPECIAL", [], {axis: 0 | 1 | 2, extent: number, block: number, thread: number}>
+export type RangeUOp = Tagged<"RANGE", [], {id: number, max: number}>
+export type EndRangeUOp = Tagged<"ENDRANGE", [RangeUOp], undefined>
+export type NoopUOp = Tagged<"NOOP", [UOp], undefined>
+export type IndexUOp = Tagged<"INDEX", [UOp, UOp], undefined>
+export type ReduceAxisUOp = Tagged<"REDUCE_AXIS", [UOp], {bin: "ADD", axis: number[]}> // sums at axes but keeps the dim as size 1
+export type ReduceUOp = Tagged<"REDUCE", [UOp], {bin: "ADD", keep: number[]}> // sums apart from keep but keeps the others as size 1 dim
+export type AddUOp = Tagged<"ADD", [UOp, UOp], undefined>
+export type MulUOp = Tagged<"MUL", [UOp, UOp], undefined>
+export type DivUOp = Tagged<"DIV", [UOp, UOp], undefined>
+export type IdivUOp = Tagged<"IDIV", [UOp, UOp], undefined>
+export type ModUOp = Tagged<"MOD", [UOp, UOp], undefined>
+export type ReshapeUOp = Tagged<"RESHAPE", [UOp], {shape: number[]}>
+export type ExpandUOp = Tagged<"EXPAND", [UOp], {shape: number[]}>
+export type PermuteUOp = Tagged<"PERMUTE", [UOp], {shape: number[]}>
+export type PadUOp = Tagged<"PAD", [UOp], {args: [number,number][]}>
+export type ShrinkUOp = Tagged<"SHRINK", [UOp], {args: [number,number][]}>
+export type ConstUOp = Tagged<"CONST", [], {val:number[], dtype:DTYPE}>
+export type ViewUOp = Tagged<"VIEW", [UOp], {views: View[]}>
+export type DefineRegUOp = Tagged<"DEFINE_REG", [], {default: number}>
+export type AfterUOp = Tagged<"AFTER", [UOp, ...UOp[]], undefined>
 
 export type UOp = BufferRef | Linear | Programm | Kernel
  | Rand
- | Store | Special | Range | EndRange | Noop | Index | ReduceAxis
- | Reduce | Add | Mul | Div | Mod | Idiv
- | Reshape | Expand | Permute | Pad | Shrink | Const | ViewUOp | DefineReg | After
+ | StoreUOp | SpecialUOp | RangeUOp | EndRangeUOp | NoopUOp | IndexUOp | ReduceAxisUOp
+ | ReduceUOp | AddUOp | MulUOp | DivUOp | ModUOp | IdivUOp
+ | ReshapeUOp | ExpandUOp | PermuteUOp | PadUOp | ShrinkUOp | ConstUOp | ViewUOp | DefineRegUOp | AfterUOp
 
 
 export type Op = UOp["op"]

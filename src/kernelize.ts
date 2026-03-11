@@ -1,9 +1,27 @@
 
 import { PatternMatcher, UPat } from "./patter_matcher";
-import { mkUop, type Kernel, type UOp, type UOpKind } from "./types";
+import { mkUop, View, ViewUOp, type Kernel, type UOp, type UOpKind } from "./types";
 import { numel, stridesFor } from "./helpers";
 import { uop } from "./uops";
 
+
+let insize = (a:View) => numel(a.dims)
+let outsize = (a:View) => 1 + a.dims.map((d,i) => a.strides[i] * (d-1)).reduce((a,c)=>a+c)
+
+let compose = (a:View, b:View) : View[]=>{
+  if (outsize(a) > insize(b)) throw new Error("input view is too large")
+  let instrides = stridesFor(b.dims);
+  let strides = a.dims.map((d,ai)=>
+    (a.strides[ai] == 0 || d == 1) ? 0 : b.strides.filter((bs,bi)=>b.dims[bi] >= d && instrides[bi] == a.strides[ai])[0])
+  if (strides.some(x=>x==undefined)) return [a,b]
+  return [{...a, strides}]
+}
+
+let compact = (views:View[]) =>{
+  let nv : View[]= [views[views.length-1]]
+  for (let i = views.length-2; i>=0; i--) nv = [...compose(views[i], nv[0] ), ...nv.slice(1)]
+  return nv
+}
 
 export const mkKernel = (g:UOp):UOp => mkUop("KERNEL", [g], {size:numel(uop.shape(g))})
 
@@ -41,6 +59,13 @@ let pm = new PatternMatcher([
     return mkUop("VIEW", [x], {views:[{dims, strides}]})
   }],
   [new UPat("v1", "VIEW", [new UPat("v2", "VIEW")]), ({v1,v2})=>(mkUop("VIEW", [v2.srcs[0]!], {views: ([v1,v2] as UOpKind<"VIEW">[]).map(v=>v.arg.views).flat()}))],
+
+  [new UPat("v", "VIEW"), ({v})=>{
+    let vv = v as ViewUOp;
+    let c = compact(vv.arg.views)
+    return (c.length < vv.arg.views.length) ? {...vv, arg:{views:c}}:null
+  }],
+
   [new UPat("x", "VIEW", [new UPat()]), ({x})=>{
 
     if (["KERNEL", "RAND", "BUFFER"].includes(x.srcs[0]!.op)) return null
