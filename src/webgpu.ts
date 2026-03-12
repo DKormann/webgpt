@@ -1,6 +1,5 @@
 import type { Backend, BinOp, BufferRef, Linear, Programm, RAWBUFFER, Tagged, UOp, UOpKind } from "./types";
 import { DEBUG } from "./debug";
-
 import { uop } from "./uops";
 
 export type WEBGPUBUFFER = RAWBUFFER;
@@ -101,7 +100,7 @@ const bufferNodesOf = (graph: UOp[]): (UOp & { op: "BUFFER" })[] => {
 const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
   const graph = bodyOf(graphIn);
   let buffers:BufferRef[] = Array.from(new Set(bufferNodesOf(graph)))
-  const written = new Set<BufferRef>();
+  const written = new Set<UOp>();
 
   let rc = 0;
 
@@ -110,19 +109,9 @@ const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
   const seedBinding = buffers.length;
   const names = new Map<UOp, string>();
   const lines: string[] = [];
-  let push = (x:string)=> lines.push('  '.repeat(rc) + x)
   const specials = graph.filter((u): u is UOp & { op: "SPECIAL" } => u.op === "SPECIAL");
   const gid = ["gid.x", "gid.y", "gid.z"] as const;
   if (specials.length > 3) throw new Error("supports at most 3 SPECIAL dims");
-
-
-  let addreg = (c:string, u:UOp) =>{
-    let name = 'x' + names.size;
-    push(`${u.op == "DEFINE_REG" ? "var" : "let"} ${name}: ${gettype(u)} = ${c};`)
-    names.set(u, name)
-  }
-
-  let addbin = (op:string, u:UOp) => addreg(`${names.get(u.srcs[0]!)} ${op} ${names.get(u.srcs[1]!)}`, u)
 
   let gettype = (u:UOp) =>{
     if (u.op == "RANGE") return "u32";
@@ -135,36 +124,65 @@ const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
     throw new Error("don know dtype for "+u.op)
   }
 
-  let binaries : Record<BinOp, string> = {
-    "ADD": "+",
-    "MUL": "*",
-    "DIV": "/",
-    "MOD": "%",
-    "IDIV": "/",
-  }
+  let binaries : Record<BinOp, string> = { "ADD": "+", "MUL": "*", "DIV": "/", "MOD": "%", "IDIV": "/" }
+
+  let incount = new Map(graphIn.map(x=>[x,0]))
+  graphIn.forEach(u=> {
+    if (u.op == "STORE") uop.fore(u.srcs[1], x=>written.add(x))
+    u.srcs.forEach(x=>incount.set(x, incount.get(x)! + 1))
+  })
+
+  let inlines: [UOp, string, string][] = []
+  let regctr = 0
 
   graph.forEach(u=>{
-    if (u.op == "DEFINE_REG") addreg("0", u)
-    else if (Object.hasOwn(binaries, u.op)) addbin(binaries[u.op as BinOp], u)
-    else if (u.op == "INDEX") names.set(u, `${names.get(u.srcs[0])}[${names.get(u.srcs[1])}]`)
+
+    console.log(u.op)
+    let getname = (x:UOp)=>{
+      inlines = inlines.filter(([u])=>u!=x)
+      return names.get(x)
+    }
+    let push = (x:string)=> lines.push(('  '.repeat(rc) + x ).padEnd(50) + " // ic: " + incount.get(u))
+    let addreg = (c:string) =>{
+      let name = 'x' + regctr++;
+      let decl = (`${written.has(u) ? "var" : "let"} ${name}: ${gettype(u)} = ${c};`)
+      if (incount.get(u)! <= 1){
+        inlines.push([u, "XXX", decl])
+        names.set(u, c)
+        return
+      }
+      push(decl)
+      names.set(u,name)
+    }
+
+    let mkinlines = () => {
+      inlines.forEach(([u,name,decl])=>{
+        push(decl)
+        names.set(u, name)
+      })
+      inlines = []
+    }
+
+    if (u.op == "DEFINE_REG") addreg("0")
+    else if (Object.hasOwn(binaries, u.op)) addreg(`${getname(u.srcs[0]!)} ${binaries[u.op as BinOp]} ${getname(u.srcs[1]!)}`)
+    else if (u.op == "INDEX") names.set(u, `${getname(u.srcs[0])}[${getname(u.srcs[1])}]`)
     else if (u.op == "RAND") {
       const ri = randIx.get(u);
       if (ri == null) throw new Error("missing RAND seed binding");
-      addreg(`randf(seeds[${ri}u] ^ ${names.get(u.srcs[0]!) ?? "0u"})`, u)
+      addreg(`randf(seeds[${ri}u] ^ ${getname(u.srcs[0]!) ?? "0u"})`)
     }
     else if (u.op == "BUFFER") names.set(u,`b${buffers.indexOf(u)}`)
     else if (u.op == "CONST") names.set(u, String(u.arg.val[0]) + (u.arg.dtype == "int32" ? "u" : ""))
     else if (u.op == "RANGE") {
+      mkinlines()
       push(`for (var r = 0u; r < ${u.arg.max}; r ++){`)
       rc ++;
-      addreg('r', u)
+      addreg('r')
     }
-    else if (u.op == "STORE"){
-      uop.topo(u.srcs[1]).filter(x=>x.op == "BUFFER").forEach(b=>written.add(b))
-      push(`${names.get(u.srcs[1])} = ${names.get(u.srcs[0])};`)
-    }
-    else if (u.op == "AFTER") names.set(u, names.get(u.srcs[0])!)
+    else if (u.op == "STORE") push(`${getname(u.srcs[1])} = ${getname(u.srcs[0])};`)
+    else if (u.op == "AFTER") addreg(getname(u.srcs[0])!)
     else if (u.op == "ENDRANGE") {
+      mkinlines()
       rc--;
       push("}")
     }
@@ -172,6 +190,7 @@ const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
     else if (u.op == "SPECIAL") names.set(u, `${gid[u.arg.axis]}`)
     else if ( u.op == "KERNEL") return
     else throw new Error("undefined codegen for: "+ uop.fmt(u))
+    console.log("inlines:", inlines)
   })
 
   const needRand = rands.length > 0;

@@ -29,3 +29,5 @@ for (let i =0; i <RUNS; i++){
 let avg_s = (performance.now()-st)/RUNS / 1e3
 
 console.log(`time: ${String(avg_s).slice(0,10)}, GFLOPS: ${String((N*N*N*2)/avg_s/1e9).slice(0,10)}`)
+
+let dat = await(await matmul(r)).read()

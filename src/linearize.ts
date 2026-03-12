@@ -5,7 +5,7 @@ type KernelUOp = UOpKind<"KERNEL">;
 
 
 export function schedule_fmt (sched:Programm){
-  return sched.srcs.map((item)=>"SCHEDULEITEM\n"+ item.srcs.map((u,i)=>`${String(i).padStart(4)}: ${u.op.padEnd(10)}: ${u.srcs.map(x=>item.srcs.indexOf(x)).join(", ").padEnd(10)}:`+
+  return sched.srcs.map((item)=>"SCHEDULEITEM\n"+ item.srcs.map((u,i)=>`${String(i).padStart(4)}: ${u.op.padEnd(10)}: ${u.srcs.map(x=>item.srcs.indexOf(x)).join(", ").padEnd(10)}: `+
   (u.arg?Object.entries(u.arg).map(([k,v])=>`${k}:${v}`).join(" "):"")
 
 ).join("\n")).join("\n")
@@ -71,10 +71,10 @@ export const linearize = (root: KernelUOp): Programm=> {
       let loops = ranges.filter(x=>!specials.includes(x))
       
       let defreg = uop.after(mkUop("DEFINE_REG", [], {default:reducer.arg.bin == "ADD" ? 0 : 1}), ...specials)
-      let accreg = uop.after(mkUop("STORE", [mkUop(reducer.arg.bin, [defreg, reducer.srcs[0]]), defreg]), ...loops)
+      let accreg = uop.store(defreg, uop.after(mkUop(reducer.arg.bin, [defreg, reducer.srcs[0]]), ...loops))
       
       let closeloops = loops.map(l=>mkUop("ENDRANGE", [l]))
-      let usereg = uop.after(accreg, ...closeloops)
+      let usereg = uop.after(defreg, accreg,...closeloops)
       replace(reducer, usereg)
       uops.forEach(x=>{if (x.op == "REDUCE") {throw new Error("REDUCE STILL IN UOPS")}})
 

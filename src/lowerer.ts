@@ -37,9 +37,8 @@ let const_fold : [UPat, (c:PatternCtx) => (UOp | null)][] = ([
 
 
 
-const indexView = (views: View[], rngs:Range[]) : UOp =>{
-
-  if (rngs.length == 0) rngs = [mkRange(1)]
+const indexView = (views: View[], rngs:UOp[]) : UOp =>{
+  if (rngs.length == 0) rngs = [uop.const([0])]
   if (views.length == 0) throw new Error("NO VIEW")
   let indexes:UOp[] = rngs
   let res:UOp | undefined = undefined;
@@ -56,11 +55,10 @@ const indexView = (views: View[], rngs:Range[]) : UOp =>{
 
 
 let rangify = (u:UOp, rngs: Range[] | null = null) : [UOp, Range[]] =>{
-  console.log("rang",uop.fmt(u))
   if (u.op == "REDUCE_AXIS"){
     let {arg:{axis, bin}, srcs: [ch]} = u;
     let [c,shp] = rangify(ch)
-    let keep = shp.map((x,i)=>!axis.includes(i)?mkRange(1):x)
+    let keep = shp.filter((x,i)=>!axis.includes(i))
     return [mkUop("REDUCE", [c], {bin, keep:keep.map(k=>k.arg.id)}) , keep]
   }
 
@@ -98,7 +96,6 @@ let rangify = (u:UOp, rngs: Range[] | null = null) : [UOp, Range[]] =>{
 
 
 let storeKernel = new PatternMatcher([
-  ...const_fold,
   [
     new UPat("u", "CONST"), ({u})=>{
       u=u as ConstUOp
@@ -112,14 +109,16 @@ let storeKernel = new PatternMatcher([
     new UPat("u", "KERNEL"), ({u}) => {
     u = u as Kernel
     let {srcs:[c]} = u;
+    if (c.op == "STORE") return null
     let [data,rs] = rangify(c)
     let dims = rs.map(r=>r.arg.max)
     let st = mkUop("STORE", [data, uop.index( mkBuffer(u.arg.size), indexView([{dims, "strides": stridesFor(dims)}], rs))], undefined)
     return {...u, srcs:[st]}
   }],
+  ...const_fold,
+
 ],)
 
 export const lowerer = (graph: Kernel): UOpKind<"KERNEL"> =>{
-  console.log(uop.fmt(graph))
   return storeKernel.match(graph) as Kernel
 }

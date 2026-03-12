@@ -99,7 +99,9 @@ export const uop
     return out
   },
 
-  map: (u:UOp, fn:(u:UOp)=>UOp):UOp => fn({...u, srcs: u.srcs.map(x=>uop.map(x,fn))} as UOp),
+  mpch: (u:UOp, fn:(u:UOp)=>UOp) => ({...u, srcs: u.srcs.map(fn)} as UOp),
+  map: (u:UOp, fn:(u:UOp)=>UOp):UOp => fn(uop.mpch(u, x=>uop.map(x, fn))),
+  fore: (u:UOp, fn:(u:UOp)=>void) => {fn(u); u.srcs.forEach(x=>uop.fore(x,fn))},
 
   dedup: (u: UOp): UOp => {
     const memo = new Map<UOp, UOp>()
