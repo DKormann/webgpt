@@ -100,27 +100,25 @@ const bufferNodesOf = (graph: UOp[]): (UOp & { op: "BUFFER" })[] => {
 
 const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
   const graph = bodyOf(graphIn);
-  // const slots = Array.from(new Set(bufferNodesOf(graph).map((u) => u.slot))).sort((a, b) => a - b);
   let buffers:BufferRef[] = Array.from(new Set(bufferNodesOf(graph)))
-  const bindBySlot = new Map(buffers.map((s, i) => [s, i]));
   const written = new Set<BufferRef>();
+
+  let rc = 0;
 
   const rands = randNodesOf(graph);
   const randIx = new Map(rands.map((r, i) => [r, i]));
   const seedBinding = buffers.length;
   const names = new Map<UOp, string>();
-  const regs = new Map<UOp, string>();
-  const ranges: UOp[] = [];
   const lines: string[] = [];
+  let push = (x:string)=> lines.push('  '.repeat(rc) + x)
   const specials = graph.filter((u): u is UOp & { op: "SPECIAL" } => u.op === "SPECIAL");
   const gid = ["gid.x", "gid.y", "gid.z"] as const;
   if (specials.length > 3) throw new Error("supports at most 3 SPECIAL dims");
 
-  // lines.push("hello")
 
   let addreg = (c:string, u:UOp) =>{
     let name = 'x' + names.size;
-    lines.push(`${u.op == "DEFINE_REG" ? "var" : "let"} ${name}: ${gettype(u)} = ${c};`)
+    push(`${u.op == "DEFINE_REG" ? "var" : "let"} ${name}: ${gettype(u)} = ${c};`)
     names.set(u, name)
   }
 
@@ -133,7 +131,7 @@ const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
     if (u.op == "SPECIAL") return "u32";
     if (u.op == "DEFINE_REG") return "f32";
     if (u.op == "CONST") return u.arg.dtype == "int32" ? "u32" : "f32";
-    if (uop.isbinary(u)) return gettype(u.srcs[0] as UOpKind<BinOp>)
+    if (uop.isbinary(u) || u.op == "AFTER") return gettype(u.srcs[0] as UOp)
     throw new Error("don know dtype for "+u.op)
   }
 
@@ -157,14 +155,19 @@ const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
     else if (u.op == "BUFFER") names.set(u,`b${buffers.indexOf(u)}`)
     else if (u.op == "CONST") names.set(u, String(u.arg.val[0]) + (u.arg.dtype == "int32" ? "u" : ""))
     else if (u.op == "RANGE") {
-      lines.push(`for (var r = 0u; r < ${u.arg.max}; r ++){`)
+      push(`for (var r = 0u; r < ${u.arg.max}; r ++){`)
+      rc ++;
       addreg('r', u)
     }
     else if (u.op == "STORE"){
       uop.topo(u.srcs[1]).filter(x=>x.op == "BUFFER").forEach(b=>written.add(b))
-      lines.push(`${names.get(u.srcs[1])} = ${names.get(u.srcs[0])};`)
-    }else if (u.op == "NOOP" || u.op == "AFTER") names.set(u, names.get(u.srcs[0])!)
-    else if (u.op == "ENDRANGE") lines.push("}")
+      push(`${names.get(u.srcs[1])} = ${names.get(u.srcs[0])};`)
+    }
+    else if (u.op == "AFTER") names.set(u, names.get(u.srcs[0])!)
+    else if (u.op == "ENDRANGE") {
+      rc--;
+      push("}")
+    }
 
     else if (u.op == "SPECIAL") names.set(u, `${gid[u.arg.axis]}`)
     else if ( u.op == "KERNEL") return

@@ -8,8 +8,7 @@ export function schedule_fmt (sched:Programm){
   return sched.srcs.map((item)=>"SCHEDULEITEM\n"+ item.srcs.map((u,i)=>`${String(i).padStart(4)}: ${u.op.padEnd(10)}: ${u.srcs.map(x=>item.srcs.indexOf(x)).join(", ").padEnd(10)}:`+
   (u.arg?Object.entries(u.arg).map(([k,v])=>`${k}:${v}`).join(" "):"")
 
-).join("\n"))
-  .join("\n")
+).join("\n")).join("\n")
 }
 
 
@@ -44,8 +43,9 @@ export const linearize = (root: KernelUOp): Programm=> {
     kernel = uop.dedup(kernel)
     let uops = uop.topo(kernel);
     const replace = (a:UOp, b:UOp) => {
-      uops = uops.map(x=>x==a?b:x)
-      uops.forEach(u=>u.srcs = u.srcs.map(x=>x==a?b:x))
+      kernel = uop.map(kernel, x=> x.op == a.op && (JSON.stringify(x) == JSON.stringify(a)) ? b : x)
+      kernel = uop.dedup(kernel)
+      uops = uop.topo(kernel)
     }
 
     let reducer;
@@ -66,35 +66,22 @@ export const linearize = (root: KernelUOp): Programm=> {
       uops = [...specials, ...uops.filter((x) => !specials.includes(x as UOpKind<"RANGE">))];
     }else{
 
-      let defreg:UOp = mkUop("DEFINE_REG", [], {default: reducer.arg.bin == "ADD" ? 0 : 1})
-      let increg :UOp = mkUop(reducer.arg.bin, [defreg, reducer.srcs[0]], undefined)
-      let accreg:UOp = mkUop("STORE", [increg, defreg], undefined)
-      let usereg:UOp = mkUop("NOOP", [defreg], undefined)
+      let  ranges = uops.filter((x)=> x.op == "RANGE")
+      specials = ranges.filter(x=>reducer.arg.keep.includes(x.arg.id))
+      let loops = ranges.filter(x=>!specials.includes(x))
+      
+      let defreg = uop.after(mkUop("DEFINE_REG", [], {default:reducer.arg.bin == "ADD" ? 0 : 1}), ...specials)
+      let accreg = uop.after(mkUop("STORE", [mkUop(reducer.arg.bin, [defreg, reducer.srcs[0]]), defreg]), ...loops)
+      
+      let closeloops = loops.map(l=>mkUop("ENDRANGE", [l]))
+      let usereg = uop.after(accreg, ...closeloops)
       replace(reducer, usereg)
+      uops.forEach(x=>{if (x.op == "REDUCE") {throw new Error("REDUCE STILL IN UOPS")}})
 
-      const ranges = uops.filter((x): x is UOpKind<"RANGE"> => x.op == "RANGE");
-      specials = ranges.filter(r=>reducer.arg.keep.includes(r.arg.id));
-      const loops = ranges.filter(r=>!specials.includes(r));
-      specials.forEach((r, i) => replace(r, specials[i]));
+      ranges = uops.filter((x)=> x.op == "RANGE")
+      specials = ranges.filter(x=>reducer.arg.keep.includes(x.arg.id))
+      loops = ranges.filter(x=>!specials.includes(x))
 
-      let loopbody = new Set<UOp> ([...loops]);
-      let loopafter = new Set<UOp> ([usereg]);
-
-      uops.forEach(u=>{
-        if (u.op == "RANGE") return
-        if (u.srcs.some(x=>loopafter.has(x))) loopafter.add(u)
-        else if (u.srcs.some(x=>loopbody.has(x))) loopbody.add(u)
-      })
-
-      uops = [
-        ...specials,
-        defreg,
-        ...uops.filter(x=> x.op != "RANGE" && !loopbody.has(x) && !loopafter.has(x)),
-        ...uops.filter(x=>loopbody.has(x)),
-        increg, accreg,
-        ...loops.reverse().map(l=>mkUop("ENDRANGE", [l as UOpKind<"RANGE">], undefined)),
-        ...loopafter
-      ]
     }
 
     if (specials.length>3) throw new Error("not implemented")

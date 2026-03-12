@@ -1,7 +1,7 @@
 import type { Op, UOp } from "./types";
 
 
-type PatternCtx = {[key:string]:UOp}
+export type PatternCtx = {[key:string]:UOp}
 
 export class UPat{
   constructor(public name:string = "", public op:Op | null | Op[] = null, public srcs: UPat[] | null = null){}

@@ -135,6 +135,8 @@ export function compile  (fn: (...args:TensorVar[])=>TensorVar): TensorFun {
         console.log(`lowered graph:\n${uop.fmt(lg)}`)
         console.log(`schedule graph:\n${schedule_fmt(sched)}`)
       }
+
+      // throw new Error("TODO");
       let runner = await WEBGPU.createRunner(sched)
       const last = sched.srcs[sched.srcs.length - 1];
       const st = [...last.srcs].reverse().find((x): x is UOp & { op: "STORE" } => x.op === "STORE");
