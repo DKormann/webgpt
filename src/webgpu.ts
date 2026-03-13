@@ -136,8 +136,6 @@ const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
   let regctr = 0
 
   graph.forEach(u=>{
-
-    console.log(u.op)
     let getname = (x:UOp)=>{
       inlines = inlines.filter(([u])=>u!=x)
       return names.get(x)
@@ -190,7 +188,6 @@ const codegen = (graphIn: UOp[]): Omit<Compiled, "pipeline"> => {
     else if (u.op == "SPECIAL") names.set(u, `${gid[u.arg.axis]}`)
     else if ( u.op == "KERNEL") return
     else throw new Error("undefined codegen for: "+ uop.fmt(u))
-    console.log("inlines:", inlines)
   })
 
   const needRand = rands.length > 0;

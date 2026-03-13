@@ -11,7 +11,8 @@ let r = await Tensor.rand([N,N])
 DEBUG.set(1)
 
 
-let matmul = compile((a)=>a.matmul(a))
+let matmul = compile((a)=>
+  a.permute([0,1]).reshape([N*N]).reshape([N,N]).permute([0,1]).matmul(a))
 
 
 await matmul(r)

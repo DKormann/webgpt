@@ -8,18 +8,33 @@ import { uop } from "./uops";
 let insize = (a:View) => numel(a.dims)
 let outsize = (a:View) => 1 + a.dims.map((d,i) => a.strides[i] * (d-1)).reduce((a,c)=>a+c)
 
-let compose = (a:View, b:View) : View[]=>{
+export let mergeView = (a:View, b:View) : View[]=>{
   if (outsize(a) > insize(b)) throw new Error("input view is too large")
   let instrides = stridesFor(b.dims);
-  let strides = a.dims.map((d,ai)=>
-    (a.strides[ai] == 0 || d == 1) ? 0 : b.strides.filter((bs,bi)=>b.dims[bi] >= d && instrides[bi] == a.strides[ai])[0])
-  if (strides.some(x=>x==undefined)) return [a,b]
+  let strides = []
+  for (let ai = 0; ai < a.dims.length; ai++){
+    let ad = a.dims[ai]
+    let as = a.strides[ai]
+    if (as == 0 || ad == 1) strides.push(0)
+    else{
+      let bmatch: number | null = null
+      b.strides.forEach((bs,bi)=>{
+        let stride = as/instrides[bi]
+        if (!Number.isInteger(stride) || b.dims[bi] <  stride * ad) return
+        bmatch = stride * bs
+      })
+      if (bmatch == null) return [a,b]
+      strides.push(bmatch)
+    }
+  }
   return [{...a, strides}]
 }
 
-let compact = (views:View[]) =>{
+export let compact = (views:View[]) =>{
+  // console.log("compact:",views)
   let nv : View[]= [views[views.length-1]]
-  for (let i = views.length-2; i>=0; i--) nv = [...compose(views[i], nv[0] ), ...nv.slice(1)]
+  for (let i = views.length-2; i>=0; i--) nv = [...mergeView(views[i], nv[0] ), ...nv.slice(1)]
+  // console.log("DONE:",nv)
   return nv
 }
 

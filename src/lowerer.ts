@@ -1,4 +1,3 @@
-import { DEBUG } from "./debug";
 import { numel, stridesFor, zip } from "./helpers";
 import { PatternCtx, PatternMatcher, UPat } from "./patter_matcher";
 import { ConstUOp, mkBuffer, mkUop, RangeUOp, type Kernel, type UOp, type UOpKind, type View } from "./types";
