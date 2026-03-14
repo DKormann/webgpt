@@ -9,6 +9,8 @@ let insize = (a:View) => numel(a.dims)
 let outsize = (a:View) => 1 + a.dims.map((d,i) => a.strides[i] * (d-1)).reduce((a,c)=>a+c)
 
 export let mergeView = (a:View, b:View) : View[]=>{
+  let bn = {dims:[], strides:[]}
+  
   if (outsize(a) > insize(b)) throw new Error("input view is too large")
   let instrides = stridesFor(b.dims);
   let strides = []
