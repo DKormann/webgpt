@@ -4,7 +4,7 @@ import { kernelize } from "./kernelize";
 import { linearize, schedule_fmt } from "./linearize";
 import { lowerer } from "./lowerer";
 import { WEBGPU } from "./webgpu";
-import { asShape, numel, stridesFor } from "./helpers";
+import { asShape, prod, stridesFor } from "./helpers";
 import { DEBUG } from "./debug";
 
 export type Raw = number | Raw[];
@@ -27,7 +27,7 @@ export class TensorVar {
 
   constructor(public uop:UOp, public shape: number[]){}
 
-  static rand = (shape:number[]) => new TensorVar(mkUop("RAND", [], {size:numel(shape), seed: 0}), shape)
+  static rand = (shape:number[]) => new TensorVar(mkUop("RAND", [], {size:prod(shape), seed: 0}), shape)
   static const = (val: number[]) => new TensorVar(uop.const(val, "float32"), [val.length])
 
   static broadcastShape = (a: number[], b: number[]): number[] => {

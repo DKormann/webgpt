@@ -1,4 +1,4 @@
-import { stridesFor } from "./helpers";
+import { contiguos } from "./helpers";
 import { BinOp, DTYPE, mkUop, UOp } from "./types";
 
 export const uop
@@ -188,7 +188,7 @@ export const uop
   },
 
   shape: (u: UOp): number[] => {
-    if (u.op === "VIEW") return [...u.arg.views[0]!.dims]
+    if (u.op === "VIEW") return [...u.arg.views[0]!.map(x=>x.size)]
     if (u.op === "CONST") return [u.arg.val.length]
     if (u.op === "BUFFER") return [u.arg.size]
     if (u.op === "RAND") return [u.arg.size]
@@ -216,12 +216,14 @@ export const uop
 }
 
 export const flattenIndex = (index:UOp[], shape:number[]) =>{
-  let strides = stridesFor(shape)
-  return uop.add(...index.map((x,i)=>uop.mul(x,strides[i]))) 
+  return uop.add(...contiguos(shape).map((c,i)=>uop.mul(index[i], c.stride)))
+  // let strides = stridesFor(shape)
+  // return uop.add(...index.map((x,i)=>uop.mul(x,strides[i]))) 
 }
 
 export const unFlattenIndex = (index:UOp, shape: number[])=>{
-  let strides = stridesFor(shape);
-  return strides.map((st,i)=> uop.idiv(uop.mod(index, shape[i]*st), st))
+  // let strides = stridesFor(shape);
+  // return strides.map((st,i)=> uop.idiv(uop.mod(index, shape[i]*st), st))
+  return contiguos(shape).map((c,i)=>uop.idiv(uop.mod(index, c.size*c.stride), c.stride))
 }
 

@@ -2,10 +2,13 @@
 export type BinOp = "ADD" | "MUL" | "DIV" | "MOD" | "IDIV"
 export type MoveOp = "RESHAPE" | "EXPAND" | "PERMUTE" | "PAD" | "SHRINK"
 
-export type View = {
-  dims: number[],
-  strides: number[]
+
+export type VDim = {
+  size: number,
+  stride: number,
 }
+
+export type View = VDim[]
 
 export type DTYPE = "int32" | "float32"
 

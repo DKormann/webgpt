@@ -1,4 +1,4 @@
-import { numel, stridesFor, zip } from "./helpers";
+import { contiguos, prod, zip } from "./helpers";
 import { PatternCtx, PatternMatcher, UPat } from "./patter_matcher";
 import { ConstUOp, mkBuffer, mkUop, RangeUOp, type Kernel, type UOp, type UOpKind, type View } from "./types";
 import { unFlattenIndex, uop } from "./uops";
@@ -43,10 +43,10 @@ const indexView = (views: View[], rngs:UOp[]) : UOp =>{
   let res:UOp | undefined = undefined;
 
   views.forEach((view,i) =>{
-    if (indexes.length != view.strides.length) throw new Error("MISSMATCH STRIDUDE"+" "+indexes.length+" "+view.strides.length)
-    let xs = indexes.map((x,i)=>uop.mul(x,view.strides[i]));
+    if (indexes.length != view.length) throw new Error("MISSMATCH STRIDUDE"+" "+indexes.length+" "+view.length)
+    let xs = indexes.map((x,i)=>uop.mul(x,view[i].stride));
     res = uop.add(...xs) 
-    if (views[i+1]) indexes = unFlattenIndex(res, views[i+1].dims)
+    if (views[i+1]) indexes = unFlattenIndex(res, views[i+1].map(x=>x.size))
   })
   if (res == undefined) throw new Error("no index")
   return res!
@@ -64,7 +64,7 @@ let rangify = (u:UOp, rngs: Range[] | null = null) : [UOp, Range[]] =>{
   if (u.op == "VIEW"){
     let {arg:{views : [v0]}, srcs:[s]} = u;
     if (rngs == null){
-      rngs = v0.dims.map(mkRange)
+      rngs = v0.map(x=>mkRange(x.size))
     }
     let index = indexView(u.arg.views, rngs);
     return [(s.op == "RAND") ? {...s, srcs: [index]} : uop.index(s, index), rngs]
@@ -111,7 +111,7 @@ let storeKernel = new PatternMatcher([
     if (c.op == "STORE") return null
     let [data,rs] = rangify(c)
     let dims = rs.map(r=>r.arg.max)
-    let st = mkUop("STORE", [data, uop.index( mkBuffer(u.arg.size), indexView([{dims, "strides": stridesFor(dims)}], rs))], undefined)
+    let st = mkUop("STORE", [data, uop.index( mkBuffer(u.arg.size), indexView([contiguos(dims)], rs))])
     return {...u, srcs:[st]}
   }],
   ...const_fold,

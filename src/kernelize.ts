@@ -1,82 +1,60 @@
 
 import { PatternMatcher, UPat } from "./patter_matcher";
-import { mkUop, View, ViewUOp, type Kernel, type UOp, type UOpKind } from "./types";
-import { numel, stridesFor } from "./helpers";
+import { mkUop, PermuteUOp, VDim, View, ViewUOp, type Kernel, type UOp, type UOpKind } from "./types";
+import { prod, contiguos, sum } from "./helpers";
 import { uop } from "./uops";
 
 
-let insize = (a:View) => numel(a.dims)
-let outsize = (a:View) => 1 + a.dims.map((d,i) => a.strides[i] * (d-1)).reduce((a,c)=>a+c)
+let maxval = (d:VDim) => (d.size-1) * d.stride
+let insize = (a:View) => prod(a.map(x=>x.size))
+let outsize = (a:View) => sum(a.map(maxval))+ 1
 
-export let mergeView = (a:View, b:View) : View[]=>{
-  let bn = {dims:[], strides:[]}
-  
-  if (outsize(a) > insize(b)) throw new Error("input view is too large")
-  let instrides = stridesFor(b.dims);
-  let strides = []
-  for (let ai = 0; ai < a.dims.length; ai++){
-    let ad = a.dims[ai]
-    let as = a.strides[ai]
-    if (as == 0 || ad == 1) strides.push(0)
-    else{
-      let bmatch: number | null = null
-      b.strides.forEach((bs,bi)=>{
-        let stride = as/instrides[bi]
-        if (!Number.isInteger(stride) || b.dims[bi] <  stride * ad) return
-        bmatch = stride * bs
-      })
-      if (bmatch == null) return [a,b]
-      strides.push(bmatch)
+let wrapMerge = <T>(x:T[], f:(a:T, b:T)=>T[]):T[]=>{
+  let res = [x[x.length-1]]
+  for (let i=x.length-2; i>= 0; i--) res = [...f(x[i], res[0]), ...res.slice(1)]
+  return res
+}
+
+export let mergeView = (av:View, bv:View) : View[]=>{
+  bv = wrapMerge(bv, (a, b) => a.stride == b.stride*b.size ? [{stride:b.stride, size:a.size*b.size}] : [a,b] )
+  if (outsize(av) > insize(bv)) throw new Error(`input view is too large:${outsize(av)} vs ${insize(bv)}`)
+  let incont = contiguos(bv.map(x=>x.size))
+  let cv:View = []
+  for (let a of av){
+    let stride = 0
+    if (maxval(a)){
+      let bm = bv.map((b,i)=> ({...b,rel:a.stride/incont[i].stride}))
+      .filter(x=>Number.isInteger(x.rel) && x.size >= x.rel * a.size)[0]
+      if (bm == undefined) return [av, bv]
+      stride = bm.rel * bm.stride
     }
+    cv.push({...a, stride})
   }
-  return [{...a, strides}]
+  return [cv]
 }
 
-export let compact = (views:View[]) =>{
-  // console.log("compact:",views)
-  let nv : View[]= [views[views.length-1]]
-  for (let i = views.length-2; i>=0; i--) nv = [...mergeView(views[i], nv[0] ), ...nv.slice(1)]
-  // console.log("DONE:",nv)
-  return nv
-}
+export let compact = (views:View[]) => wrapMerge(views, mergeView)
 
-export const mkKernel = (g:UOp):UOp => mkUop("KERNEL", [g], {size:numel(uop.shape(g))})
+export const mkKernel = (g:UOp):UOp => mkUop("KERNEL", [g], {size:prod(uop.shape(g))})
 
 let pm = new PatternMatcher([
   [new UPat("r", "RESHAPE", [new UPat("x")]), ({r, x}) => {
-    let olddims = uop.shape(x)
     let shape = (r as UOpKind<"RESHAPE">).arg.shape
-    if (numel(olddims) != numel(shape)) throw new Error("RESHAPE numel mismatch")
-    return mkUop("VIEW", [x], {views:[{dims: shape, strides: stridesFor(shape)}]})
+    if (prod(uop.shape(x)) != prod(shape)) throw new Error("RESHAPE numel mismatch")
+    return mkUop("VIEW", [x], {views:[contiguos(shape)]})
   }],
   [new UPat("p", "PERMUTE", [new UPat("x")]), ({p, x}) => {
-    let olddims = uop.shape(x)
-    let dims = olddims.slice()
-    let oldstrides = stridesFor(olddims)
-    let strides = oldstrides.slice();
-    ;(p as UOpKind<"PERMUTE">).arg.shape.map((pd: number, i: number)=>{
-      dims[i] = olddims[pd]
-      strides[i] = oldstrides[pd]
-    })
-    return mkUop("VIEW", [x], {views:[{dims, strides}]})
+    let str = contiguos(uop.shape(x))
+    return mkUop("VIEW",[x], {views:[(p as PermuteUOp).arg.shape.map(p=>str[p])]})
   }],
   [new UPat("e", "EXPAND", [new UPat("x")]), ({e, x}) => {
-    let olddims = uop.shape(x)
-    let oldstrides = stridesFor(olddims)
+    let shp = contiguos(uop.shape(x))
     let dims = (e as UOpKind<"EXPAND">).arg.shape.slice()
-    let strides = dims.map((_x:number)=>0)
-    let pad = dims.length - olddims.length
-    if (pad < 0) throw new Error("EXPAND rank mismatch")
-    for (let i = 0; i < olddims.length; i++) {
-      let j = i + pad
-      if (olddims[i] == dims[j]) strides[j] = oldstrides[i]
-      else if (olddims[i] == 1) strides[j] = 0
-      else throw new Error("EXPAND dim mismatch")
-    }
-    return mkUop("VIEW", [x], {views:[{dims, strides}]})
+    if (dims.length != shp.length) throw new Error("EXPAND rank mismatch")
+    for (let i = 0; i < shp.length; i++) if (shp[i].size != 1 && dims[i] != shp[i].size) throw new Error("EXPAND on sized dim")
+    return mkUop("VIEW", [x], {views:[contiguos(dims)]})
   }],
   [new UPat("v1", "VIEW", [new UPat("v2", "VIEW")]), ({v1,v2})=>(mkUop("VIEW", [v2.srcs[0]!], {views: ([v1,v2] as UOpKind<"VIEW">[]).map(v=>v.arg.views).flat()}))],
-
   [new UPat("v", "VIEW"), ({v})=>{
     let vv = v as ViewUOp;
     let c = compact(vv.arg.views)
@@ -84,7 +62,6 @@ let pm = new PatternMatcher([
   }],
 
   [new UPat("x", "VIEW", [new UPat()]), ({x})=>{
-
     if (["KERNEL", "RAND", "BUFFER"].includes(x.srcs[0]!.op)) return null
     return {...x,srcs:[mkKernel(x.srcs[0]!)]} as UOp
   }],

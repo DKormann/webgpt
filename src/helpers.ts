@@ -1,4 +1,4 @@
-import { Raw } from "./types"
+import { Raw, View } from "./types"
 
 export const log =<T> (...args:[...any[], T]):T =>{
   console.log(...args.map(x=>{
@@ -11,18 +11,22 @@ export const log =<T> (...args:[...any[], T]):T =>{
   return args[args.length-1]
 }
 
-export const stridesFor = (shape: number[]): number[] =>
-  shape.map((_, i) => shape.slice(i + 1).reduce((a, c) => a * c, 1));
+
+// export const contiguos = (shape:number[]):View => shape.slice(0,-1).reverse()
+//   .reduce((a,c)=>[...a, {stride: a[0].stride* c, size:c}], [{stride: 1, size: shape[shape.length-1]}]).reverse()
+
+export const contiguos = (shape:number[]):View => shape.map((size,i)=>({size,stride:prod(shape.slice(i+1))}))
 
 export const asShape = (shape:number[], raw:number[]): Raw =>{
 
   if (shape.length == 0) return raw[0]
   let d = shape[0]
-  let n = numel(shape.slice(1,))
+  let n = prod(shape.slice(1,))
   return Array.from({length:d}, ()=>0).map((_,i)=> asShape(shape.slice(1), raw.slice(i*n, (i+1)*n)))
 }
 
-export const numel = (shape: number[]): number => shape.reduce((a, b) => a * b, 1);
+export const prod = (shape: number[]): number => shape.reduce((a, b) => a * b, 1);
+export const sum = (shape: number[]): number => shape.reduce((a, b) => a + b);
 
 export const partition =<T> (ls:T[], f:(t:T)=>boolean):[T[],T[]] =>{
   let a : T[] = []
