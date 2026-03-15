@@ -12,7 +12,9 @@ DEBUG.set(1)
 
 
 let matmul = compile((a)=>
-  a.permute([0,1]).reshape([N*N]).reshape([N,N]).permute([0,1]).matmul(a))
+  // a.permute([0,1]).reshape([N*N]).reshape([N,N]).permute([0,1]).matmul(a))
+  a.matmul(a)
+)
 
 
 await matmul(r)

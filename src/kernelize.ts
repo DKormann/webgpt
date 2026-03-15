@@ -1,7 +1,7 @@
 
 import { PatternMatcher, UPat } from "./patter_matcher";
 import { mkUop, PermuteUOp, VDim, View, ViewUOp, type Kernel, type UOp, type UOpKind } from "./types";
-import { prod, contiguos, sum } from "./helpers";
+import { prod, contiguos, sum, zip } from "./helpers";
 import { uop } from "./uops";
 
 
@@ -17,7 +17,7 @@ let wrapMerge = <T>(x:T[], f:(a:T, b:T)=>T[]):T[]=>{
 
 export let mergeView = (av:View, bv:View) : View[]=>{
   bv = wrapMerge(bv, (a, b) => a.stride == b.stride*b.size ? [{stride:b.stride, size:a.size*b.size}] : [a,b] )
-  if (outsize(av) > insize(bv)) throw new Error(`input view is too large:${outsize(av)} vs ${insize(bv)}`)
+  if (outsize(av) > insize(bv)) throw new Error(`input view is too large:${JSON.stringify(av, null ,2)} vs ${JSON.stringify(bv, null,2)}`)
   let incont = contiguos(bv.map(x=>x.size))
   let cv:View = []
   for (let a of av){
@@ -49,14 +49,20 @@ let pm = new PatternMatcher([
   }],
   [new UPat("e", "EXPAND", [new UPat("x")]), ({e, x}) => {
     let shp = contiguos(uop.shape(x))
-    let dims = (e as UOpKind<"EXPAND">).arg.shape.slice()
+    let dims = (e as UOpKind<"EXPAND">).arg.shape
     if (dims.length != shp.length) throw new Error("EXPAND rank mismatch")
-    for (let i = 0; i < shp.length; i++) if (shp[i].size != 1 && dims[i] != shp[i].size) throw new Error("EXPAND on sized dim")
-    return mkUop("VIEW", [x], {views:[contiguos(dims)]})
+    return mkUop("VIEW", [x], {views:[zip(dims, shp).map(([d,s])=>{
+      if (d != s.size){
+        if (s.size!=1) throw new Error("Expand on sized dim")
+        return {size:d, stride: 0}
+      }
+      return s
+    })]})
   }],
   [new UPat("v1", "VIEW", [new UPat("v2", "VIEW")]), ({v1,v2})=>(mkUop("VIEW", [v2.srcs[0]!], {views: ([v1,v2] as UOpKind<"VIEW">[]).map(v=>v.arg.views).flat()}))],
   [new UPat("v", "VIEW"), ({v})=>{
     let vv = v as ViewUOp;
+    console.log(JSON.stringify(vv,null,2))
     let c = compact(vv.arg.views)
     return (c.length < vv.arg.views.length) ? {...vv, arg:{views:c}}:null
   }],
@@ -68,6 +74,7 @@ let pm = new PatternMatcher([
 ])
 
 export const kernelize = (u:UOp):UOpKind<"KERNEL"> => {
+  console.log(uop.fmt(u))
 
   return mkKernel(pm.match(u)) as UOpKind<"KERNEL">
 

@@ -4,7 +4,7 @@ import { kernelize } from "./kernelize";
 import { linearize, schedule_fmt } from "./linearize";
 import { lowerer } from "./lowerer";
 import { WEBGPU } from "./webgpu";
-import { asShape, prod, stridesFor } from "./helpers";
+import { asShape, contiguos, prod } from "./helpers";
 import { DEBUG } from "./debug";
 
 export type Raw = number | Raw[];
@@ -42,17 +42,18 @@ export class TensorVar {
     return out
   }
 
-  static broadcastTo = (x: TensorVar, shape: number[]): TensorVar => {
-    if (x.shape.length > shape.length) throw new Error(`broadcast rank mismatch: ${x.shape} -> ${shape}`)
-    const pad = shape.length - x.shape.length
-    const reshaped = x.reshape(new Array(pad).fill(1).concat(x.shape))
-    return reshaped.expand(shape)
-  }
+  // static broadcastTo = (x: TensorVar, shape: number[]): TensorVar => {
+  //   if (x.shape.length > shape.length) throw new Error(`broadcast rank mismatch: ${x.shape} -> ${shape}`)
+  //   const pad = shape.length - x.shape.length
+  //   const reshaped = x.reshape(new Array(pad).fill(1).concat(x.shape))
+  //   return reshaped.expand(shape)
+  // }
   
   static bin = (op:BinOp, a:TensorVar, b:TensorVar)=> {
     const shape = TensorVar.broadcastShape(a.shape, b.shape)
-    a = TensorVar.broadcastTo(a, shape)
-    b = TensorVar.broadcastTo(b, shape)
+    console.log("broadcast ",a.shape, " to :",shape)
+    a = a.expand(shape)
+    b = b.expand(shape)
     return new TensorVar(mkUop(op, [a.uop,b.uop], undefined), shape)
   }
   mul = (other:TensorVar) => TensorVar.bin("MUL", this, other)
@@ -114,7 +115,7 @@ export function compile  (fn: (...args:TensorVar[])=>TensorVar): TensorFun {
 
       let invars = inbuffs.map((b,i)=>{
         const shape = xs[i].shape
-        return new TensorVar(mkUop("VIEW", [b], {views:[{dims: shape, strides: stridesFor(shape)}]}), shape)
+        return new TensorVar(mkUop("VIEW", [b], {views: [contiguos(shape)]}), shape)
       })
       let graph = fn(...invars)
 
@@ -136,7 +137,6 @@ export function compile  (fn: (...args:TensorVar[])=>TensorVar): TensorFun {
         console.log(`schedule graph:\n${schedule_fmt(sched)}`)
       }
 
-      // throw new Error("TODO");
       let runner = await WEBGPU.createRunner(sched)
       const last = sched.srcs[sched.srcs.length - 1];
       const st = [...last.srcs].reverse().find((x): x is UOp & { op: "STORE" } => x.op === "STORE");
